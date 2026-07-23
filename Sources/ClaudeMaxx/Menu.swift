@@ -58,6 +58,18 @@ final class Menu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        // First-run setup / debug entry point (§8.1, §14): opens the feed
+        // window on demand, bypassing the showDelay debounce and independent
+        // of any active Claude Code session, so a user can log into a
+        // channel's platform — or a developer can eyeball the window —
+        // without waiting on a real prompt. Safe to leave open indefinitely;
+        // nothing auto-hides it (SPEC §6's IDLE transitions only fire from
+        // an active wait or /cmd off).
+        let showNow = NSMenuItem(title: "Show Window Now", action: #selector(showWindowNow), keyEquivalent: "")
+        showNow.target = self
+        menu.addItem(showNow)
+        menu.addItem(.separator())
+
         for mode in Mode.allCases {
             let item = NSMenuItem(title: mode.menuTitle, action: #selector(selectMode(_:)), keyEquivalent: "")
             item.target = self
@@ -138,6 +150,15 @@ final class Menu: NSObject, NSMenuDelegate {
     @objc private func selectChannel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         settings.channel = id
+        // If the window is already open (e.g. a setup/login session), make
+        // the switch live instead of only taking effect on the next show —
+        // otherwise picking a second channel to log into does nothing until
+        // the window is closed and reopened.
+        orchestrator.switchChannelIfShowing()
+    }
+
+    @objc private func showWindowNow() {
+        orchestrator.showNow(openedBy: .menu)
     }
 
     /// If approval is pending, deep-link to System Settings instead of

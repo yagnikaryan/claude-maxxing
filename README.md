@@ -42,6 +42,7 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx ask` | mode := ask (persisted, default) | `claude-maxx mode set to ask` |
 | `/claude-maxx off` | mode := off; hide chip + window | `claude-maxx mode set to off` |
 | `/claude-maxx now` | open window immediately | `opening window` |
+| `/claude-maxx setup` | open window immediately, for first-run login | `opening window — pick a channel from the CM menu bar icon to log in...` |
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line |
 | `/claude-maxx status` (or bare) | none | one-line state dump |
@@ -49,6 +50,12 @@ Once the command file is installed, control the daemon from inside a Claude Code
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
 §4.3), and running the command itself briefly triggers `/start`→`/stop` like any prompt, which the
 debounce (below) absorbs harmlessly.
+
+**Setup / debugging without a prompt:** the menu bar's **"Show Window Now"** item opens the feed
+window on demand — no prompt, no token cost, works even with zero active sessions. Handy both for
+the one-time per-platform login (pick a channel from the menu, sign in, pick the next one — the
+window updates live, no need to close and reopen) and for eyeballing the window while developing.
+`/claude-maxx setup` does the same from inside a Claude Code session.
 
 ## Config knobs
 
@@ -111,8 +118,9 @@ nothing here deletes your data.
 
 **A platform (YouTube/X) asks me to verify it's me the first time.** Expected, one-time friction —
 the embedded webview looks unfamiliar to the platform, so it may ask for an email code or "was
-this you?" confirmation. Run `/claude-maxx now` to open the window on demand and sign in once;
-cookies persist in the app's own data store after that.
+this you?" confirmation. Click **"Show Window Now"** in the menu bar (or run `/claude-maxx setup`)
+to open the window on demand, pick each channel from the menu to sign into it in turn — cookies
+persist in the app's own data store after that.
 
 **Does this send my prompts anywhere?** No. The daemon binds `127.0.0.1` exclusively (never
 `0.0.0.0`) and never receives prompt text, transcript contents, or your working directory — hooks

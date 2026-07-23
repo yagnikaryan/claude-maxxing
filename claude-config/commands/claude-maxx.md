@@ -1,5 +1,5 @@
 ---
-description: Control Claude Maxx (off | ask | auto | now | scroll on | scroll off | status)
+description: Control Claude Maxx (off | ask | auto | now | setup | scroll on | scroll off | stats | status)
 allowed-tools: Bash(curl:*)
 ---
 

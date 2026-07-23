@@ -101,6 +101,7 @@ Mechanics: the `!`-prefixed line executes as bash *before* the prompt is sent, a
 | `/claude-maxx ask` | mode := ask (persisted, default) | `claude-maxx mode set to ask` |
 | `/claude-maxx off` | mode := off; hide chip + window | `claude-maxx mode set to off` |
 | `/claude-maxx now` | open window immediately | `opening window` |
+| `/claude-maxx setup` | open window immediately (alias of `now` with setup-oriented copy) — also reachable with zero token cost via the menu bar's "Show Window Now" item | `opening window — pick a channel from the CM menu bar icon to log in, then /claude-maxx off to hide it when done (it has no close button by design — non-activating panel, §7)` |
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line (§9.3) |
 | `/claude-maxx status` (or bare) | none | one-line state dump |
@@ -403,6 +404,43 @@ Loopback bind only; no auth on the API is acceptable *only* because of that bind
 | 12 | Advance = click platform-shipped desktop next-buttons, with jittered timing | Verified present on all three platforms (Jul 2026); legitimate interaction path removes the synthetic-input problem; jitter removes the metronome signature |
 
 ---
+
+## Post-M2 addition: setup / debug entry point
+
+Added after the initial M1+M2 pass, prompted by needing to log into each
+channel's platform (and to debug the window) without waiting on a real
+Claude Code prompt each time:
+
+- **Menu item "Show Window Now"** calls `Orchestrator.showNow(openedBy: .menu)`
+  directly from the menu bar — zero token cost, no prompt needed, works with
+  zero active sessions. This is the primary way to reach the first-run login
+  flow referenced in §8.1/§14's "Show window now" tooltip.
+- **`/claude-maxx setup`** — a `/cmd` grammar alias of `now` with copy aimed at
+  first-run login, for parity when driving from inside a Claude Code session.
+- **Live channel switching while already open** — `Orchestrator.switchChannelIfShowing()`.
+  Previously, picking a channel from the menu while the window was already
+  SHOWING/ALERTING was silently dropped (`handleShowNow`'s `.showing,
+  .alerting: break` case never re-presented) — a user could only ever log
+  into whichever channel happened to be active on first show. The menu's
+  `selectChannel` now calls this after persisting `settings.channel`, so
+  switching between Shorts/X/Reading to log into each one works within a
+  single open setup session. It is a pure re-point of the current episode —
+  no new `content` stats event, no state-machine transition. Scoped to
+  SHOWING only, not ALERTING: re-presenting fresh (unpaused) content while
+  ALERTING would leave `state` stuck at `.alerting`, and a genuinely new
+  `/attention` would then no-op against it (`handleAttention`'s
+  `state == .showing` guard, §6) — so channel switching during an attention
+  alert stays a persist-only no-op, same as while idle.
+- **`FeedPanel.performShow` only recomputes/`setFrame`s geometry on a fresh
+  open** (`!isVisible`), not on every `show(channel:)` call. Needed once
+  channel switching could re-invoke `show` on an already-visible window —
+  otherwise it would re-resolve from the last-*persisted* `settings.
+  windowFrame` and silently discard a resize/reposition made earlier in the
+  same still-open episode.
+- The window has no close button by design (`styleMask` is
+  `[.nonactivatingPanel, .resizable]`, never `.closable`, and it's shown via
+  `orderFrontRegardless()` so it never becomes key) — `/claude-maxx off` (or
+  quitting the app) is the only way to end a setup session opened this way.
 
 ## Naming conventions for this implementation
 

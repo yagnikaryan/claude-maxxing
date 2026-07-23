@@ -67,6 +67,25 @@ final class HookServerTests: XCTestCase {
         )
     }
 
+    /// Builds its own Router (rather than `makeRouter()`) with an injected
+    /// `SpyFeedPresenter` — `/cmd?arg=setup` calls `showNow`, which would
+    /// otherwise materialize a real `FeedPanel`/`WKWebView` through
+    /// `makeRouter()`'s default-constructed Orchestrator.
+    func testCmdSetupOpensWindowAndPointsToMenuBar() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let statsFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jsonl")
+        let stats = StatsStore(fileURL: statsFileURL)
+        let spy = SpyFeedPresenter()
+        let orchestrator = Orchestrator(settings: settings, stats: stats, feedPresenterFactory: { spy })
+        let router = Router(settings: settings, stats: stats, orchestrator: orchestrator)
+
+        let response = router.route(HTTPRequestLine.parse("GET /cmd?arg=setup HTTP/1.1")!)
+
+        XCTAssertTrue(response.contains("opening window"))
+        XCTAssertTrue(response.contains("CM menu bar"))
+    }
+
     func testStatsJSONReturnsValidJSON() throws {
         let router = makeRouter()
         let body = router.route(HTTPRequestLine.parse("GET /stats.json HTTP/1.1")!)

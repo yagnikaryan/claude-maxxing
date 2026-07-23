@@ -119,20 +119,28 @@ final class FeedPanel: NSPanel, FeedPresenting {
             webView.load(URLRequest(url: channel.url))
         }
 
-        guard let fallback = mainScreenInfo() else { return }   // no displays — nothing to show
-        let screens = NSScreen.screens.map { WindowGeometry.ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame) }
-        let restored = settings.windowFrame.map { NSRectFromString($0) }
+        // Only place the window from scratch on a fresh open. If it's
+        // already visible (e.g. Menu's channel picker switching channels
+        // mid-episode via switchChannelIfShowing), re-resolving from the
+        // last-*persisted* settings.windowFrame would discard any resize/
+        // reposition the user just made in this still-open episode — leave
+        // the live frame alone and only swap content.
+        if !isVisible {
+            guard let fallback = mainScreenInfo() else { return }   // no displays — nothing to show
+            let screens = NSScreen.screens.map { WindowGeometry.ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+            let restored = settings.windowFrame.map { NSRectFromString($0) }
 
-        let frame = WindowGeometry.resolvedFrame(
-            restored: restored,
-            desiredSize: Self.defaultDesiredSize,
-            aspectRatio: aspect,
-            screens: screens,
-            mouseLocation: NSEvent.mouseLocation,
-            fallbackScreen: fallback,
-            corner: .bottomRight
-        )
-        setFrame(frame, display: true)
+            let frame = WindowGeometry.resolvedFrame(
+                restored: restored,
+                desiredSize: Self.defaultDesiredSize,
+                aspectRatio: aspect,
+                screens: screens,
+                mouseLocation: NSEvent.mouseLocation,
+                fallbackScreen: fallback,
+                corner: .bottomRight
+            )
+            setFrame(frame, display: true)
+        }
         orderFrontRegardless()   // no makeKeyAndOrderFront: never takes key/activates app
 
         if let channel {

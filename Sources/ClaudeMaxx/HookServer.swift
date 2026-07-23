@@ -98,6 +98,9 @@ final class Router {
         case "now":
             orchestrator.showNow(openedBy: .cmd)
             return "opening window"
+        case "setup":
+            orchestrator.showNow(openedBy: .cmd)
+            return "opening window — pick a channel from the CM menu bar icon to log in, then /claude-maxx off to hide it when done (it has no close button by design — non-activating panel, SPEC §7)"
         case "scroll on":
             settings.autoAdvance = true
             return "auto-advance on"

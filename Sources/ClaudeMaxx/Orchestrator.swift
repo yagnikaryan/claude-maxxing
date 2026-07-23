@@ -170,6 +170,22 @@ final class Orchestrator {
         queue.sync { handleShowNow(openedBy: openedBy) }
     }
 
+    /// Re-resolves `settings.channel` and re-points the shared webview while
+    /// a content episode is already open — the fix for Menu's channel picker
+    /// while the setup/login window is up (multiple platforms to sign into
+    /// in one open episode). A no-op outside SHOWING, including ALERTING:
+    /// re-presenting fresh content there would leave `state` at `.alerting`
+    /// (still "paused, awaiting attention") while the new channel is actually
+    /// unpaused and playing, and `handleAttention`'s `state == .showing`
+    /// guard (§6) would then no-op a genuinely new `/attention` until the
+    /// user interacts — so channel switching during an attention alert stays
+    /// a persist-only no-op, same as while idle. Deliberately does not touch
+    /// state/timers/stats otherwise — it is not a new content episode, just
+    /// a live re-point of the current one.
+    func switchChannelIfShowing() {
+        queue.sync { handleSwitchChannelIfShowing() }
+    }
+
     /// ChipPanel hook, wired via `chipPresenter.onSelect` above — not called
     /// from HookServer (channel taps happen on the chip, not over HTTP).
     func chipSelect(channelID: String) {
@@ -366,6 +382,11 @@ final class Orchestrator {
             showTimer = nil
             beginShowing(openedBy: openedBy, at: now())
         }
+    }
+
+    private func handleSwitchChannelIfShowing() {
+        guard state == .showing else { return }
+        presentWindow()
     }
 
     private func handleChipSelect(channelID: String) {
