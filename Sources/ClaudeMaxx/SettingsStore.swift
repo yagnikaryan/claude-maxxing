@@ -75,8 +75,11 @@ final class SettingsStore {
         set { defaults.set(newValue, forKey: Keys.snapBack) }
     }
 
-    // raw NSWindow.saveFrame(usingName:) string; nil until first drag/save.
-    // No default registered (absence is meaningful — "no saved frame yet").
+    // NSStringFromRect(window.frame) string — round-tripped via NSRectFromString
+    // by FeedPanel, not NSWindow.saveFrame(usingName:) (which would write its
+    // own auto-generated UserDefaults key, bypassing this store entirely).
+    // nil until first hide(); no default registered (absence is meaningful —
+    // "no saved frame yet").
     var windowFrame: String? {
         get { defaults.string(forKey: Keys.windowFrame) }
         set { defaults.set(newValue, forKey: Keys.windowFrame) }

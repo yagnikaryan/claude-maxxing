@@ -73,6 +73,7 @@ final class Orchestrator {
     private let watchdogInterval: TimeInterval
     private let now: () -> Date
     private let chipPresenterFactory: () -> ChipPresenting
+    private let feedPresenterFactory: () -> FeedPresenting
 
     private let queue = DispatchQueue(label: "com.claudemaxx.orchestrator")
 
@@ -85,6 +86,12 @@ final class Orchestrator {
         presenter.onWatch = { [weak self] in self?.chipWatch() }
         presenter.onSkip = { [weak self] in self?.chipSkip() }
         return presenter
+    }()
+
+    /// Lazily constructed for the same reason as `chipPresenter` above.
+    /// `FeedPresenting` has no callbacks, so no wiring beyond construction.
+    private lazy var feedPresenter: FeedPresenting = {
+        feedPresenterFactory()
     }()
 
     private var tracker = SessionTracker()
@@ -112,7 +119,8 @@ final class Orchestrator {
         watchdogTimeout: TimeInterval = 1800,
         watchdogInterval: TimeInterval = 60,
         now: @escaping () -> Date = Date.init,
-        chipPresenterFactory: @escaping () -> ChipPresenting = { ChipPanel() }
+        chipPresenterFactory: @escaping () -> ChipPresenting = { ChipPanel() },
+        feedPresenterFactory: @escaping () -> FeedPresenting = { FeedPanel() }
     ) {
         self.settings = settings
         self.stats = stats
@@ -120,6 +128,7 @@ final class Orchestrator {
         self.watchdogInterval = watchdogInterval
         self.now = now
         self.chipPresenterFactory = chipPresenterFactory
+        self.feedPresenterFactory = feedPresenterFactory
         startWatchdog()
     }
 
@@ -377,11 +386,13 @@ final class Orchestrator {
         }
     }
 
-    // MARK: Presentation-action stubs
+    // MARK: Presentation actions
     //
-    // Real bodies land once ChipPanel/FeedPanel exist. Kept as real,
-    // no-throw, side-effect-free stubs so the state machine's control flow
-    // around them is fully exercised now.
+    // All four hop to main thread like presentChip()/dismissChip() below —
+    // these handlers run on `queue` (a background serial queue), and the
+    // lazy `feedPresenter`/`chipPresenter` must first-materialize on the
+    // main thread since AppKit view/window construction off the main
+    // thread is undefined behavior.
 
     private func presentChip() {
         // `chipPresenter` is a lazy var whose first access constructs a real
@@ -403,22 +414,29 @@ final class Orchestrator {
     }
 
     private func presentWindow() {
-        log("TODO(Panels): show FeedPanel (channel=\(settings.channel))")
+        // Channel registry doesn't exist yet (§12 M2 tasks 8-10) — pass nil.
+        // FeedPanel still shows a blank, correctly-geometried panel; activeChannel
+        // stays nil until a concrete ContentChannel lands.
+        DispatchQueue.main.async { [weak self] in
+            self?.feedPresenter.show(channel: nil)
+        }
     }
 
     private func hideWindowAction() {
-        log("TODO(Panels): hide FeedPanel")
+        DispatchQueue.main.async { [weak self] in
+            self?.feedPresenter.hide()
+        }
     }
 
     private func pauseContent() {
-        log("TODO(Panels): pause content")
+        DispatchQueue.main.async { [weak self] in
+            self?.feedPresenter.pause()
+        }
     }
 
     private func bounceAttention() {
-        log("TODO(Panels): bounce attention")
-    }
-
-    private func log(_ message: String) {
-        FileHandle.standardError.write("Orchestrator: \(message)\n".data(using: .utf8)!)
+        DispatchQueue.main.async { [weak self] in
+            self?.feedPresenter.attention()
+        }
     }
 }
