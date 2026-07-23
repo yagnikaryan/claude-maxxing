@@ -37,19 +37,12 @@ struct HTTPRequestLine {
 final class Router {
     private let settings: SettingsStore
     private let stats: StatsStore
-    private let stateQueue = DispatchQueue(label: "com.claudemaxx.router.state")
+    private let orchestrator: Orchestrator
 
-    // TODO(Orchestrator): replace with SessionTracker (sessions dict + anonCount
-    // become owned there, plus the watchdog timer per SPEC §5/§6).
-    private var sessions: [String: Date] = [:]
-    private var anonCount: Int = 0
-    // TODO(Orchestrator/PresentationController): replace with real state machine
-    // (IDLE/PENDING/OFFERING/SHOWING/ALERTING per SPEC §6).
-    private var windowVisible = false
-
-    init(settings: SettingsStore = .shared, stats: StatsStore = .shared) {
+    init(settings: SettingsStore = .shared, stats: StatsStore = .shared, orchestrator: Orchestrator? = nil) {
         self.settings = settings
         self.stats = stats
+        self.orchestrator = orchestrator ?? Orchestrator(settings: settings, stats: stats)
     }
 
     func route(_ request: HTTPRequestLine) -> String {
@@ -65,7 +58,7 @@ final class Router {
         case "/show":
             return handleShow()
         case "/status":
-            return stateQueue.sync { statusLine() }
+            return statusLine()
         case "/stats.json":
             return handleStatsJSON()
         default:
@@ -76,32 +69,15 @@ final class Router {
     // MARK: - Session endpoints
 
     private func handleStart(_ request: HTTPRequestLine) -> String {
-        stateQueue.sync {
-            // TODO(Orchestrator): count 0→1 should arm the PENDING debounce timer (§6).
-            if let sid = request.query["sid"] {
-                sessions[sid] = Date()
-            } else {
-                anonCount += 1
-            }
-            return "session started (active=\(activeCount))"
-        }
+        orchestrator.start(sid: request.query["sid"])
     }
 
     private func handleStop(_ request: HTTPRequestLine) -> String {
-        stateQueue.sync {
-            // TODO(Orchestrator): count→0 should trigger IDLE transition / snap-back.
-            if let sid = request.query["sid"] {
-                sessions.removeValue(forKey: sid)
-            } else {
-                anonCount = max(0, anonCount - 1)
-            }
-            return "session stopped (active=\(activeCount))"
-        }
+        orchestrator.stop(sid: request.query["sid"])
     }
 
     private func handleAttention() -> String {
-        // TODO(Orchestrator): channel-aware pause/banner + NSApp.requestUserAttention (§8.4).
-        "attention received"
+        orchestrator.attention()
     }
 
     // MARK: - /cmd grammar (§4.2)
@@ -117,11 +93,10 @@ final class Router {
             return "claude-maxx mode set to ask"
         case "off":
             settings.mode = .off
-            // TODO(Orchestrator): hide chip + window.
+            orchestrator.commandOff()
             return "claude-maxx mode set to off"
         case "now":
-            // TODO(Orchestrator/Panels): actually show window.
-            stateQueue.sync { windowVisible = true }
+            orchestrator.showNow(openedBy: .cmd)
             return "opening window"
         case "scroll on":
             settings.autoAdvance = true
@@ -132,7 +107,7 @@ final class Router {
         case "stats":
             return statsLine()
         case "status", "":
-            return stateQueue.sync { statusLine() }
+            return statusLine()
         default:
             return "unknown claude-maxx command: \(arg)"
         }
@@ -141,8 +116,7 @@ final class Router {
     // MARK: - /show, /status, /stats.json
 
     private func handleShow() -> String {
-        // TODO(Orchestrator/Panels): real window presentation.
-        stateQueue.sync { windowVisible = true }
+        orchestrator.showNow(openedBy: .http)
         return "showing window"
     }
 
@@ -152,9 +126,8 @@ final class Router {
 
     // MARK: - Shared body builders
 
-    /// Must be called on `stateQueue`.
     private func statusLine() -> String {
-        "mode=\(settings.mode.rawValue) active_sessions=\(activeCount) window=\(windowVisible ? "visible" : "hidden") auto_advance=\(settings.autoAdvance)"
+        "mode=\(settings.mode.rawValue) active_sessions=\(orchestrator.activeSessionCount) window=\(orchestrator.isWindowVisible ? "visible" : "hidden") auto_advance=\(settings.autoAdvance)"
     }
 
     private func statsLine() -> String {
@@ -162,11 +135,6 @@ final class Router {
         let contentMinutes = Int(daily.contentSeconds / 60)
         let waitMinutes = Int(daily.waitSeconds / 60)
         return "today: \(daily.waits) waits, \(contentMinutes)m content / \(waitMinutes)m waiting, \(daily.chipWatch)/\(daily.chipOffered) watched"
-    }
-
-    /// Must be called on `stateQueue`.
-    private var activeCount: Int {
-        sessions.count + anonCount
     }
 }
 
