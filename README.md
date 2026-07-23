@@ -148,6 +148,12 @@ own documented scroll fallback as their *only* advance mechanism. Everything els
 detection, stats reporting) is already wired, so swapping in a real chevron click later is a
 one-line change once someone pins the live selector.
 
+**Can I type into the window? Clicking a login form does nothing.** Click directly into the page
+first — the panel takes keyboard focus only when you click it (it never grabs focus just by
+appearing, so it can't hijack your typing mid-prompt). Once clicked, type normally; clicking back
+into your terminal returns keystrokes there. If this is broken you're on a build older than the
+`canBecomeKey` fix — rebuild and restart the daemon.
+
 **A platform (YouTube/X) asks me to verify it's me the first time.** Expected, one-time friction —
 the embedded webview looks unfamiliar to the platform, so it may ask for an email code or "was
 this you?" confirmation. Click **"Show Window Now"** in the menu bar (or run `/claude-maxx setup`)

@@ -104,9 +104,27 @@ final class FeedPanel: NSPanel, FeedPresenting {
         )
     }
 
+    /// A borderless panel defaults to `canBecomeKey == false`, which made
+    /// the webview permanently unfocusable: WebKit treated every page as
+    /// blurred, so login forms never took a cursor and typing was
+    /// impossible ("I can't type into the Instagram login"). Overriding to
+    /// `true` does NOT violate decision #7 ("never steal keyboard focus") —
+    /// the panel still never *takes* key on show (`performShow` uses
+    /// `orderFrontRegardless`, never `makeKeyAndOrderFront`, and
+    /// `.nonactivatingPanel` keeps the app from activating). It only
+    /// *accepts* key when the user deliberately clicks into it, Spotlight-
+    /// style, which is precisely what a login flow needs.
+    override var canBecomeKey: Bool { true }
+
     private func configure() {
         isFloatingPanel = true
         level = .floating
+        // Partner to `canBecomeKey` above: defer key status until a click
+        // lands on a view that asks for it (`needsPanelToBecomeKey`). The
+        // webview reports it always wants key, so in practice any click on
+        // page content focuses the panel — but the drag strip doesn't, and
+        // merely *showing* the panel still never takes key either way.
+        becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isOpaque = true   // real content, unlike ChipPanel's translucent chip

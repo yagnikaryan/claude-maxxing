@@ -448,8 +448,10 @@ Claude Code prompt each time:
   same still-open episode.
 - The window has no close button by design (`styleMask` is
   `[.nonactivatingPanel, .resizable]`, never `.closable`, and it's shown via
-  `orderFrontRegardless()` so it never becomes key) — `/claude-maxx off` (or
-  quitting the app) is the only way to end a setup session opened this way.
+  `orderFrontRegardless()` so it never becomes key *on show*; it can become
+  key when clicked — see the login-typing bugfix section below) —
+  `/claude-maxx off`/`hide` (or quitting the app) is the only way to end a
+  setup session opened this way.
 - **Drag handle.** `FeedPanel` had no way to be moved: no `.titled` style
   mask (no title bar) and `isMovableByWindowBackground` was never set, and
   wouldn't have helped anyway since the `WKWebView` fills the entire content
@@ -633,6 +635,38 @@ testing, fixed together:
   instead of only taking effect on the next open; and a `SessionEnd` hook
   now mirrors `Stop` (§3.1), since `Stop` doesn't fire on user interrupts
   and a dead session otherwise held the window open until the watchdog.
+
+## Post-integration bugfix: unfocusable webview made login typing impossible
+
+Reported from live use: "when I try to log in, I can't type anything on the
+input in the window; even the Instagram login buttons won't work."
+
+Root cause: `FeedPanel` is a *borderless* panel, and a borderless
+`NSWindow`/`NSPanel` defaults to `canBecomeKey == false`. A window that can
+never become key can never give its webview first-responder status, so
+WebKit rendered every page in a permanently *blurred* document state: text
+inputs could never take a caret (typing impossible, full stop), and
+focus-dependent login widgets misbehaved. This silently contradicted §8.1's
+whole login story ("each platform is a one-time manual sign-in inside the
+window") — sign-in was impossible in the shipped window.
+
+Fix, two lines in `FeedPanel`:
+
+- `override var canBecomeKey: Bool { true }` — the panel *may* hold key.
+- `becomesKeyOnlyIfNeeded = true` — it only *takes* key when a click lands
+  on a view that requests it (`needsPanelToBecomeKey`; WebKit's content
+  view requests it for page clicks, the drag strip does not).
+
+Decision #7 ("never steal keyboard focus from the terminal") is preserved,
+and the distinction is worth stating precisely: the panel never takes key
+when it **appears** (`performShow` uses `orderFrontRegardless()`, never
+`makeKeyAndOrderFront`, and `.nonactivatingPanel` keeps the app itself from
+activating — the terminal's app stays active and its menu bar stays up).
+It accepts key only on a deliberate user click into the page — the
+Spotlight model: keystrokes route to the panel while it's key, and click
+back into the terminal returns them. Auto-opened episodes during a prompt
+remain exactly as unobtrusive as before unless the user chooses to
+interact.
 
 ## Naming conventions for this implementation
 
