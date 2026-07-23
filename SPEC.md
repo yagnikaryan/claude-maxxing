@@ -441,6 +441,53 @@ Claude Code prompt each time:
   `[.nonactivatingPanel, .resizable]`, never `.closable`, and it's shown via
   `orderFrontRegardless()` so it never becomes key) — `/claude-maxx off` (or
   quitting the app) is the only way to end a setup session opened this way.
+- **Drag handle.** `FeedPanel` had no way to be moved: no `.titled` style
+  mask (no title bar) and `isMovableByWindowBackground` was never set, and
+  wouldn't have helped anyway since the `WKWebView` fills the entire content
+  view, leaving no true "window background" for AppKit to hit-test. Fixed
+  with a thin overlay strip (`DragHandleView`, layered *over* the webview
+  rather than pushing it down, so the §7.1 aspect/geometry math is
+  untouched) whose `mouseDown` calls `window?.performDrag(with:)` — the
+  reliable way to make an arbitrary borderless-panel view draggable. Also
+  shows the active channel's `displayName`, since channels otherwise have no
+  on-window chrome at all.
+
+## Post-M4 partial addition: Reels and TikTok channels (scroll-only)
+
+`ReelsChannel` and `TikTokChannel` were added ahead of full M4, at the
+user's request, with a deliberate scope cut: **`advance()` is scroll-only**
+(`window.scrollBy({top: window.innerHeight, behavior: 'instant'})`), not the
+chevron-click §8.2 describes. Live DOM investigation during this addition
+(narrow automated-browser viewport, no accessible names on TikTok's action
+rail, no working candidate found; Reels needs an actual account login to
+test at all) confirmed §8.2's own warning that these selectors must come
+from live inspection, not be guessed — so rather than ship an unverified
+selector, both channels use the spec's own documented fallback as their only
+mechanism for now. Everything else matches `ShortsChannel`'s pattern exactly
+(same `ended`/currentTime detection, same jitter, same `cm` message handler
+for the `advance` stats event) — swapping in a real chevron click later
+(§12 M4) only means replacing `cmClickNext`'s body in each channel file.
+
+`cmClickNext()` reports success honestly — it compares `window.scrollY`
+before/after the scroll and only fires the `advance` stats event (§9.2) if
+the page actually moved, rather than unconditionally claiming success like
+a real button click would. This matters because Reels' desktop layout is
+commonly a fixed single-reel viewer with no `window`-level scroll at all
+(chevron/keyboard nav instead) — if that's the case here, `scrollBy` is a
+silent no-op and `videosCompleted` correctly stays flat for that channel
+rather than being inflated by a click that did nothing. TikTok's feed is
+more plausibly page-scrollable. Neither could be confirmed with live-page
+access during this build; verifying which is true (and pinning the real
+chevron either way) is the actual M4 follow-up.
+
+**Known limitation, not fixed:** `ChipPanel.contentSize`'s width grows
+linearly with `ChannelRegistry.all.count` (one button per channel + Skip) —
+5 channels now makes it ~520pt wide, up from ~352pt at 3. `WindowGeometry`'s
+aspect-locked clamp (§7.1) could shrink the whole chip, including its 76pt
+height, on an unusually narrow display (e.g. a tight split-screen). Not
+addressed here — a real fix (wrapping to multiple rows, or a scrollable
+row) is more scope than "add two channels" warrants; flagging so it isn't
+silently forgotten if a 6th channel is ever added.
 
 ## Naming conventions for this implementation
 

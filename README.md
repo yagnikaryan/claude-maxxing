@@ -93,7 +93,7 @@ LAYER 2 · ORCHESTRATOR (this daemon)
                        ChipPanel / FeedPanel, SettingsStore, StatsStore
                     │  ContentChannel protocol
 LAYER 3 · CONTENT (channel adapters over one shared WKWebView)
-  ShortsChannel · XFeedChannel · ReadingChannel
+  ShortsChannel · XFeedChannel · ReadingChannel · ReelsChannel · TikTokChannel
 ```
 
 Hooks are the *signal wire* — they fire on every prompt unconditionally and report lifecycle only
@@ -115,6 +115,14 @@ Stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`) and settings are 
 nothing here deletes your data.
 
 ## FAQ
+
+**Reels/TikTok don't auto-advance to the next video when one ends — they just scroll.** Known,
+intentional for now. Per SPEC §8.2, the real "next video" chevron selectors on those two platforms
+have to be pinned from live DOM inspection, not guessed — Reels also needs an actual account login
+to test meaningfully. Rather than ship a guessed selector, both channels currently use the spec's
+own documented scroll fallback as their *only* advance mechanism. Everything else (jitter, `ended`
+detection, stats reporting) is already wired, so swapping in a real chevron click later is a
+one-line change once someone pins the live selector.
 
 **A platform (YouTube/X) asks me to verify it's me the first time.** Expected, one-time friction —
 the embedded webview looks unfamiliar to the platform, so it may ask for an email code or "was

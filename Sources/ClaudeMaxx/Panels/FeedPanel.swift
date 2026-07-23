@@ -1,6 +1,49 @@
 import AppKit
 import WebKit
 
+/// A thin overlay strip so the otherwise-undraggable panel can be moved.
+/// `isMovableByWindowBackground` has no effect here: the `WKWebView` fills
+/// the entire content view, so nothing is left as true "window background"
+/// for AppKit to hit-test — `performDrag(with:)` is the only reliable way to
+/// make an arbitrary borderless-panel view draggable. Also doubles as the
+/// one place a user can see which channel is currently loaded (SPEC §7.1
+/// gives channels no on-window chrome otherwise).
+private final class DragHandleView: NSView {
+    let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Without this, AppKit's normal front-to-back hit-testing would deliver
+    /// mouseDown to the label subview (not this view) whenever the click
+    /// lands on the visible channel-name text — exactly the most obvious
+    /// spot to grab — and `performDrag` below would never fire there.
+    /// Claiming the whole strip for self makes every point in it draggable.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
 /// What Orchestrator needs from a feed presenter — mirrors `ChipPresenting`'s
 /// pattern so Orchestrator stays unit-testable without a real AppKit window.
 /// No callbacks: unlike the chip's Watch/Skip buttons, the feed panel never
@@ -22,9 +65,15 @@ final class FeedPanel: NSPanel, FeedPresenting {
     /// 9:16 base desired size; the actual on-screen size is clamped by
     /// `WindowGeometry.clampedSize` against the target screen's visible frame.
     static let defaultDesiredSize = NSSize(width: 360, height: 640)
+    /// Deliberately layered *over* the webview rather than pushing it down,
+    /// so the window's aspect-ratio/geometry math (§7.1, already covered by
+    /// WindowGeometryTests) keeps treating the whole content rect as the
+    /// video area — adding a drag handle doesn't change any of that math.
+    static let dragHandleHeight: CGFloat = 22
 
     private let settings: SettingsStore
     private let webView: WKWebView
+    private let dragHandle = DragHandleView(frame: .zero)
     private(set) var activeChannel: ContentChannel?
 
     init(settings: SettingsStore = .shared) {
@@ -81,15 +130,22 @@ final class FeedPanel: NSPanel, FeedPresenting {
 
     private func installWebView() {
         webView.translatesAutoresizingMaskIntoConstraints = false
+        dragHandle.translatesAutoresizingMaskIntoConstraints = false
 
         let content = NSView(frame: NSRect(origin: .zero, size: Self.defaultDesiredSize))
         content.addSubview(webView)
+        content.addSubview(dragHandle)   // added after webView: sits on top in z-order
 
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             webView.topAnchor.constraint(equalTo: content.topAnchor),
             webView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+
+            dragHandle.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            dragHandle.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            dragHandle.topAnchor.constraint(equalTo: content.topAnchor),
+            dragHandle.heightAnchor.constraint(equalToConstant: Self.dragHandleHeight),
         ])
 
         self.contentView = content
@@ -105,6 +161,7 @@ final class FeedPanel: NSPanel, FeedPresenting {
 
     private func performShow(channel: ContentChannel?) {
         activeChannel = channel
+        dragHandle.label.stringValue = channel?.displayName ?? "Claude Maxx"
 
         let aspect = channel?.preferredAspect ?? Self.defaultAspect
         contentAspectRatio = aspect
