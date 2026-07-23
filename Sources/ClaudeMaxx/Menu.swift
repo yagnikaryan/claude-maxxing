@@ -76,6 +76,15 @@ final class Menu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        let loginItemTitle = LoginItem.requiresApproval
+            ? "Launch at Login (approve in System Settings…)"
+            : "Launch at Login"
+        let loginItem = NSMenuItem(title: loginItemTitle, action: #selector(toggleLoginItem), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(loginItem)
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "Quit Claude Maxx", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -129,6 +138,20 @@ final class Menu: NSObject, NSMenuDelegate {
     @objc private func selectChannel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         settings.channel = id
+    }
+
+    /// If approval is pending, deep-link to System Settings instead of
+    /// re-registering (which would just come back `.requiresApproval`
+    /// again). Otherwise flip the OS-level login item and immediately
+    /// re-query live status — same "rebuild reflects reality now" pattern
+    /// as `selectMode`/`selectChannel`'s implicit rebuild on next open.
+    @objc private func toggleLoginItem() {
+        if LoginItem.requiresApproval {
+            LoginItem.openSystemSettings()
+        } else {
+            LoginItem.setEnabled(!LoginItem.isEnabled)
+        }
+        rebuildMenu()
     }
 
     @objc private func quitApp() {
