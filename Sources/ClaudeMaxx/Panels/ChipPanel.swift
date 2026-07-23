@@ -4,24 +4,35 @@ import AppKit
 /// Orchestrator stays unit-testable without a real AppKit window (mirrors
 /// how it already takes SettingsStore/StatsStore as injectable deps).
 protocol ChipPresenting: AnyObject {
-    var onWatch: (() -> Void)? { get set }
+    var onSelect: ((String) -> Void)? { get set }   // payload: ContentChannel.id
     var onSkip: (() -> Void)? { get set }
     func present()   // must be safe to call from any thread
     func dismiss()   // must be safe to call from any thread
 }
 
-/// ~260×76pt non-activating chip per SPEC §7. Top-right corner, .floating
-/// level, title "Claude is working…", Watch/Skip buttons. Self-dismisses on
-/// IDLE — but that's driven externally: every OFFERING→IDLE path in
-/// Orchestrator already calls dismissChip(), so ChipPanel itself carries no
-/// IDLE-detection timer.
+/// Non-activating chip per SPEC §7. Top-right corner, .floating level, title
+/// "Claude is working…", one button per `ChannelRegistry.all` entry plus
+/// Skip (M2 task 11 — v0.2's Watch/Skip becomes a channel picker). Self-
+/// dismisses on IDLE — but that's driven externally: every OFFERING→IDLE
+/// path in Orchestrator already calls dismissChip(), so ChipPanel itself
+/// carries no IDLE-detection timer.
 final class ChipPanel: NSPanel, ChipPresenting {
-    static let contentSize = NSSize(width: 260, height: 76)
+    /// Sized to fit one button per registered channel plus Skip, at a fixed
+    /// per-button width + spacing + padding; floored at 260 (the v0.2
+    /// minimum) so a future single-channel configuration doesn't shrink the
+    /// chip below its original size.
+    static var contentSize: NSSize {
+        let buttonWidth: CGFloat = 76
+        let spacing: CGFloat = 8
+        let horizontalPadding: CGFloat = 12 * 2
+        let buttonCount = CGFloat(ChannelRegistry.all.count + 1)   // + Skip
+        let width = buttonCount * buttonWidth + (buttonCount - 1) * spacing + horizontalPadding
+        return NSSize(width: max(260, width), height: 76)
+    }
 
-    var onWatch: (() -> Void)?
+    var onSelect: ((String) -> Void)?
     var onSkip: (() -> Void)?
 
-    private let watchButton = NSButton(title: "Watch", target: nil, action: nil)
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
 
     init() {
@@ -61,16 +72,22 @@ final class ChipPanel: NSPanel, ChipPresenting {
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
 
-        watchButton.bezelStyle = .rounded
-        watchButton.keyEquivalent = "\r"
-        watchButton.target = self
-        watchButton.action = #selector(watchTapped)
+        let channelButtons = ChannelRegistry.all.map { channel -> NSButton in
+            let button = NSButton(title: channel.displayName, target: self, action: #selector(channelTapped(_:)))
+            button.bezelStyle = .rounded
+            button.identifier = NSUserInterfaceItemIdentifier(channel.id)
+            return button
+        }
 
         skipButton.bezelStyle = .rounded
         skipButton.target = self
         skipButton.action = #selector(skipTapped)
 
-        let buttonRow = NSStackView(views: [watchButton, skipButton])
+        // No `keyEquivalent` default here — with one button per channel
+        // there's no longer a single canonical "Watch" action to imply as
+        // default (v0.2's Watch button had `\r`; the picker deliberately
+        // doesn't privilege one channel over another).
+        let buttonRow = NSStackView(views: channelButtons + [skipButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
         buttonRow.distribution = .fillEqually
@@ -99,7 +116,10 @@ final class ChipPanel: NSPanel, ChipPresenting {
         self.contentView = content
     }
 
-    @objc private func watchTapped() { onWatch?() }
+    @objc private func channelTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        onSelect?(id)
+    }
     @objc private func skipTapped() { onSkip?() }
 
     // MARK: ChipPresenting

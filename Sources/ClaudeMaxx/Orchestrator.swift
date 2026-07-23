@@ -61,6 +61,16 @@ struct SessionTracker {
     }
 }
 
+// MARK: - IDLE-transition notification (SPEC §9.3)
+
+/// Posted every time Orchestrator's state machine (re-)enters IDLE, so Menu
+/// can refresh its disabled stats item "on IDLE transitions" per §9.3
+/// without polling. Posted on Orchestrator's private background `queue` —
+/// observers must hop to main before touching AppKit.
+extension Notification.Name {
+    static let claudeMaxxDidBecomeIdle = Notification.Name("com.claudemaxx.didBecomeIdle")
+}
+
 // MARK: - Orchestrator
 
 /// Owns session accounting, the presentation state machine (§6), and the
@@ -83,7 +93,7 @@ final class Orchestrator {
     /// without a live window server.
     private lazy var chipPresenter: ChipPresenting = {
         let presenter = chipPresenterFactory()
-        presenter.onWatch = { [weak self] in self?.chipWatch() }
+        presenter.onSelect = { [weak self] channelID in self?.chipSelect(channelID: channelID) }
         presenter.onSkip = { [weak self] in self?.chipSkip() }
         return presenter
     }()
@@ -160,9 +170,10 @@ final class Orchestrator {
         queue.sync { handleShowNow(openedBy: openedBy) }
     }
 
-    /// Future ChipPanel hook — not wired from HookServer yet.
-    func chipWatch() {
-        queue.sync { handleChipWatch() }
+    /// ChipPanel hook, wired via `chipPresenter.onSelect` above — not called
+    /// from HookServer (channel taps happen on the chip, not over HTTP).
+    func chipSelect(channelID: String) {
+        queue.sync { handleChipSelect(channelID: channelID) }
     }
 
     /// Future ChipPanel hook — not wired from HookServer yet.
@@ -187,6 +198,16 @@ final class Orchestrator {
     }
 
     // MARK: Private handlers (assume already on `queue`)
+
+    /// Every inline `state = .idle` assignment goes through this so Menu's
+    /// "refreshed on IDLE transitions" AC (§9.3) has exactly one signal to
+    /// observe. Posting on every idle-entry (including already-idle
+    /// defensive paths) is harmless — Menu's handler just recomputes stats
+    /// from StatsStore, which is idempotent.
+    private func enterIdle() {
+        state = .idle
+        NotificationCenter.default.post(name: .claudeMaxxDidBecomeIdle, object: nil)
+    }
 
     private func handleStart(sid: String?) -> String {
         let t = now()
@@ -222,7 +243,7 @@ final class Orchestrator {
         guard state == .pending else { return }
         showTimer = nil
         guard tracker.activeCount > 0, !skippedThisWait else {
-            state = .idle
+            enterIdle()
             return
         }
         switch settings.mode {
@@ -234,7 +255,7 @@ final class Orchestrator {
             presentChip()
         case .off:
             // Defensive — mode flipped mid-flight.
-            state = .idle
+            enterIdle()
         }
     }
 
@@ -262,10 +283,10 @@ final class Orchestrator {
 
         switch state {
         case .pending:
-            state = .idle
+            enterIdle()
         case .offering:
             dismissChip()
-            state = .idle
+            enterIdle()
         case .showing, .alerting:
             pauseContent()
             hideWindowAction()
@@ -273,7 +294,7 @@ final class Orchestrator {
             if settings.snapBack, !suppressSnapBack, let app = capturedFrontmostApp {
                 app.activate(options: [])
             }
-            state = .idle
+            enterIdle()
         case .idle:
             break // Post-Skip "IDLE*" case: count reached 0 with nothing visible.
         }
@@ -317,15 +338,15 @@ final class Orchestrator {
         showTimer = nil
         switch state {
         case .pending:
-            state = .idle
+            enterIdle()
         case .offering:
             dismissChip()
-            state = .idle
+            enterIdle()
         case .showing, .alerting:
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: .cmd, at: now())
-            state = .idle
+            enterIdle()
         case .idle:
             break
         }
@@ -347,10 +368,11 @@ final class Orchestrator {
         }
     }
 
-    private func handleChipWatch() {
+    private func handleChipSelect(channelID: String) {
         guard state == .offering else { return }
         dismissChip()
-        stats.append(.chip(action: .watch))
+        settings.channel = channelID          // persists via SettingsStore, matches menu's own persistence path
+        stats.append(.chip(action: .watch))    // still the "watch" outcome — no new ChipAction case needed
         beginShowing(openedBy: .chip, at: now())
     }
 
@@ -359,7 +381,7 @@ final class Orchestrator {
         dismissChip()
         stats.append(.chip(action: .skip))
         skippedThisWait = true
-        state = .idle
+        enterIdle()
     }
 
     private func handleUserInteraction() {
@@ -414,11 +436,14 @@ final class Orchestrator {
     }
 
     private func presentWindow() {
-        // Channel registry doesn't exist yet (§12 M2 tasks 8-10) — pass nil.
-        // FeedPanel still shows a blank, correctly-geometried panel; activeChannel
-        // stays nil until a concrete ContentChannel lands.
+        // Resolve `settings.channel` (persisted cm.channel, mutated by the
+        // chip picker and the menu's channel selector) through the channel
+        // registry (§12 M2 task 11). Falls back to the first registered
+        // channel if the stored id doesn't match anything current (e.g. a
+        // stale value from a channel that no longer exists).
+        let channel = ChannelRegistry.channel(withID: settings.channel) ?? ChannelRegistry.all.first
         DispatchQueue.main.async { [weak self] in
-            self?.feedPresenter.show(channel: nil)
+            self?.feedPresenter.show(channel: channel)
         }
     }
 
