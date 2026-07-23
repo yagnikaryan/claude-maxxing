@@ -72,8 +72,20 @@ final class Orchestrator {
     private let watchdogTimeout: TimeInterval
     private let watchdogInterval: TimeInterval
     private let now: () -> Date
+    private let chipPresenterFactory: () -> ChipPresenting
 
     private let queue = DispatchQueue(label: "com.claudemaxx.orchestrator")
+
+    /// Lazily constructed so `Orchestrator()`'s init never touches AppKit
+    /// unless a chip is actually shown — keeps `Router()`'s default-
+    /// constructed Orchestrator (e.g. in HookServerTests) safe to build
+    /// without a live window server.
+    private lazy var chipPresenter: ChipPresenting = {
+        let presenter = chipPresenterFactory()
+        presenter.onWatch = { [weak self] in self?.chipWatch() }
+        presenter.onSkip = { [weak self] in self?.chipSkip() }
+        return presenter
+    }()
 
     private var tracker = SessionTracker()
     private var state: PresentationState = .idle
@@ -99,13 +111,15 @@ final class Orchestrator {
         stats: StatsStore = .shared,
         watchdogTimeout: TimeInterval = 1800,
         watchdogInterval: TimeInterval = 60,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        chipPresenterFactory: @escaping () -> ChipPresenting = { ChipPanel() }
     ) {
         self.settings = settings
         self.stats = stats
         self.watchdogTimeout = watchdogTimeout
         self.watchdogInterval = watchdogInterval
         self.now = now
+        self.chipPresenterFactory = chipPresenterFactory
         startWatchdog()
     }
 
@@ -370,11 +384,22 @@ final class Orchestrator {
     // around them is fully exercised now.
 
     private func presentChip() {
-        log("TODO(Panels): show ChipPanel (channel=\(settings.channel))")
+        // `chipPresenter` is a lazy var whose first access constructs a real
+        // ChipPanel (NSPanel + AppKit views). presentChip()/dismissChip() run
+        // on `queue` (a background serial queue), so that first materialization
+        // must be pushed onto the main thread explicitly — AppKit view/window
+        // construction off the main thread is undefined behavior. `.present()`
+        // itself also main-hops internally, but only *after* the lazy var
+        // already exists, which is too late to protect the construction site.
+        DispatchQueue.main.async { [weak self] in
+            self?.chipPresenter.present()
+        }
     }
 
     private func dismissChip() {
-        log("TODO(Panels): dismiss ChipPanel")
+        DispatchQueue.main.async { [weak self] in
+            self?.chipPresenter.dismiss()
+        }
     }
 
     private func presentWindow() {
