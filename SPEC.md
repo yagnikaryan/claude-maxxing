@@ -536,8 +536,41 @@ Three real bugs reported after using the app, all fixed together:
   forever. Fixed by guarding `enterPending()` on `state == .idle`: a 0→1
   transition while state is already SHOWING/ALERTING (the manual-open case)
   now just lets the session count update without disturbing the
-  presentation state, so the window continues as part of that same episode
-  and closes normally once the real session ends.
+  presentation state.
+
+## Follow-up fix: manual episodes must not close on an incidental /stop
+
+The fix above still had a gap, caught immediately after shipping it:
+**`/claude-maxx setup` opened a window that closed the instant the command's
+own prompt turn finished.** `/claude-maxx setup`/`now` is itself submitted as
+a Claude Code prompt — its own `UserPromptSubmit` fires *before* the embedded
+curl runs (registering a session → PENDING, since mode≠off), `showNow`
+then force-shows the window from that PENDING state, and moments later that
+same session's `Stop` fires once the trivial curl-and-echo turn ends. The
+`state == .idle` guard above only protects against a *different* session
+clobbering an already-open window — it does nothing to stop the *originating*
+session's own `/stop` from closing what it just opened, because that's
+`handleWaitEnded` working exactly as designed for the normal per-prompt flow.
+
+Root fix: a manually-opened episode (`showNow` with `openedBy` of `.cmd`,
+`.http`, or `.menu` — Show Window Now / `/claude-maxx now`/`setup` / `/show`)
+is fundamentally decoupled from any particular session's lifecycle, not just
+from *other* sessions. `beginShowing` now sets `isManuallyPinned` for those
+three openers (never for `.auto`/`.chip` — the real per-prompt feature is
+unaffected). `handleWaitEnded`'s `.showing`/`.alerting` case skips the
+hide/pause/log/snap-back entirely when `closedBy == .stop && isManuallyPinned`
+— an incidental `/stop` leaves it open. Only two things ever end a pinned
+episode: an explicit `/claude-maxx off` (`handleCommandOff`, unconditional —
+pinned or not), or the watchdog (`closedBy == .watchdog` is deliberately
+*not* checked against the pinned flag, so a genuinely crashed/orphaned
+session still can't pin the window open forever).
+
+This does mean a manually-opened window now stays open through any number of
+real prompts that happen to run while it's up — including ones that started
+*after* it was opened, superseding this fix's own earlier, narrower
+assumption that such a prompt ending should close it. That's the correct
+model for the feature's actual purpose (log into a channel, on your own
+timeline) rather than an accident of implementation order.
 
 ## Naming conventions for this implementation
 

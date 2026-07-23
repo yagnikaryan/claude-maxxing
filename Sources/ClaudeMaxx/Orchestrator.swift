@@ -117,6 +117,19 @@ final class Orchestrator {
     private var skippedThisWait = false
     /// Captured at PENDING entry, for snap-back.
     private var capturedFrontmostApp: NSRunningApplication?
+    /// True for a content episode opened via a manual override (`.cmd`,
+    /// `.http`, `.menu` — Show Window Now / `/claude-maxx now`/`setup` /
+    /// `/show`), false for the automatic per-prompt flow (`.auto`, `.chip`).
+    /// Set in `beginShowing`, read by `handleWaitEnded`. Exists because
+    /// `/claude-maxx now`/`setup` is itself submitted as a Claude Code
+    /// prompt — its own `UserPromptSubmit`/`Stop` hooks fire around that
+    /// same short-lived turn, so without this flag the window it just
+    /// opened would immediately close again the instant that trivial
+    /// curl-and-echo turn ends, defeating the entire point of a manual
+    /// "open it so I can log in" override. A manually-pinned episode is
+    /// closed only by an explicit `/claude-maxx off` (`handleCommandOff`)
+    /// or the watchdog safety net — never by an incidental `/stop`.
+    private var isManuallyPinned = false
 
     /// The showDelay debounce, one-shot.
     private var showTimer: DispatchSourceTimer?
@@ -291,6 +304,7 @@ final class Orchestrator {
         state = .showing
         showingStartedAt = t
         showOpenedBy = openedBy
+        isManuallyPinned = (openedBy == .cmd || openedBy == .http || openedBy == .menu)
         presentWindow()
     }
 
@@ -309,6 +323,8 @@ final class Orchestrator {
         showTimer?.cancel()
         showTimer = nil
 
+        var didCloseContent = false
+
         switch state {
         case .pending:
             enterIdle()
@@ -316,6 +332,15 @@ final class Orchestrator {
             dismissChip()
             enterIdle()
         case .showing, .alerting:
+            if closedBy == .stop && isManuallyPinned {
+                // Manual override (see `isManuallyPinned`'s doc comment) —
+                // an incidental /stop from whatever session happened to
+                // trigger the manual show must not close it. Leave state,
+                // showingStartedAt/showOpenedBy, and capturedFrontmostApp
+                // untouched; the episode continues until an explicit
+                // /claude-maxx off or the watchdog closes it instead.
+                break
+            }
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: closedBy, at: t)
@@ -323,6 +348,7 @@ final class Orchestrator {
                 app.activate(options: [])
             }
             enterIdle()
+            didCloseContent = true
         case .idle:
             break // Post-Skip "IDLE*" case: count reached 0 with nothing visible.
         }
@@ -332,9 +358,12 @@ final class Orchestrator {
         }
         waitStartedAt = nil
         skippedThisWait = false
-        capturedFrontmostApp = nil
-        showingStartedAt = nil
-        showOpenedBy = nil
+        if didCloseContent {
+            isManuallyPinned = false
+            capturedFrontmostApp = nil
+            showingStartedAt = nil
+            showOpenedBy = nil
+        }
     }
 
     private func logContentEnd(closedBy: ContentClosedBy, at t: Date) {
@@ -371,6 +400,9 @@ final class Orchestrator {
             dismissChip()
             enterIdle()
         case .showing, .alerting:
+            // Unconditional, unlike handleWaitEnded's /stop path — an
+            // explicit /claude-maxx off always closes, pinned or not; it's
+            // the one thing that's supposed to end a manually-pinned episode.
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: .cmd, at: now())
@@ -378,6 +410,7 @@ final class Orchestrator {
         case .idle:
             break
         }
+        isManuallyPinned = false
         showingStartedAt = nil
         showOpenedBy = nil
     }
@@ -385,7 +418,16 @@ final class Orchestrator {
     private func handleShowNow(openedBy: ContentOpenedBy) {
         switch state {
         case .showing, .alerting:
-            break // Already visible.
+            // Already visible — but if a manual override (menu/cmd/http)
+            // arrives while an *automatic* (.auto/.chip) episode is already
+            // showing, upgrade it to pinned. Without this, a user running
+            // /claude-maxx now/setup to explicitly "take over" an
+            // already-open window would still have it close on the
+            // originating session's next /stop, since nothing here
+            // otherwise touches isManuallyPinned at all.
+            if openedBy == .cmd || openedBy == .http || openedBy == .menu {
+                isManuallyPinned = true
+            }
         case .offering:
             dismissChip()
             beginShowing(openedBy: openedBy, at: now())

@@ -49,13 +49,17 @@ Once the command file is installed, control the daemon from inside a Claude Code
 
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
 §4.3), and running the command itself briefly triggers `/start`→`/stop` like any prompt, which the
-debounce (below) absorbs harmlessly.
+debounce (below) absorbs harmlessly for most subcommands. `now`/`setup` are the exception — they
+bypass the debounce on purpose (that's the point, an instant window) — see the note below.
 
 **Setup / debugging without a prompt:** the menu bar's **"Show Window Now"** item opens the feed
 window on demand — no prompt, no token cost, works even with zero active sessions. Handy both for
 the one-time per-platform login (pick a channel from the menu, sign in, pick the next one — the
 window updates live, no need to close and reopen) and for eyeballing the window while developing.
-`/claude-maxx setup` does the same from inside a Claude Code session.
+`/claude-maxx setup` does the same from inside a Claude Code session — and since that's itself a
+prompt whose own `/start`→`/stop` would otherwise close the window it just opened the instant that
+trivial turn finishes, a window opened this way (or via "Show Window Now") stays open regardless of
+any prompts that run while it's up. Only `/claude-maxx off` or quitting closes it.
 
 ## Config knobs
 
