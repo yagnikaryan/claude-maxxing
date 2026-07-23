@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/start?sid=$sid\" > /dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/stop?sid=$sid\" > /dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s --max-time 1 http://127.0.0.1:8765/attention > /dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
