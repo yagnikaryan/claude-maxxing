@@ -115,4 +115,36 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(orchestrator.isWindowVisible)
         XCTAssertEqual(spy.shownChannelIDs, [settings.channel])
     }
+
+    /// Regression test for the "window never closes" bug: opening the
+    /// window manually (Show Window Now / /claude-maxx setup) with zero
+    /// sessions, then starting a real prompt afterward, used to clobber
+    /// `state` from .showing back to .pending inside handleStart — the
+    /// window stayed visibly open, but the state machine no longer knew it
+    /// was in a content episode. When the prompt's `/stop` later drove the
+    /// session count back to 0, handleWaitEnded saw .pending/.offering
+    /// instead of .showing and never called hide() — the window would sit
+    /// there forever. It must instead stay .showing straight through, and
+    /// close normally once the real session ends.
+    func testWindowOpenedManuallyThenAPromptStartsAndEndsStillCloses() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let spy = SpyFeedPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings)
+
+        orchestrator.showNow(openedBy: .menu)
+        drainMainQueue()
+        XCTAssertTrue(orchestrator.isWindowVisible)
+
+        _ = orchestrator.start(sid: "a")
+        XCTAssertTrue(
+            orchestrator.isWindowVisible,
+            "a prompt starting after a manual show must not knock the window out of SHOWING"
+        )
+
+        _ = orchestrator.stop(sid: "a")
+        drainMainQueue()
+
+        XCTAssertFalse(orchestrator.isWindowVisible)
+        XCTAssertEqual(spy.hideCount, 1, "the window must actually be hidden once the real session ends")
+    }
 }

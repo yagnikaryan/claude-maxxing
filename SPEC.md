@@ -173,7 +173,7 @@ The window must never render partially off-screen. The rules, in order:
 3. **Anchor bottom-right of the *target screen*:** `origin = (visible.maxX − width − margin, visible.minY + margin)`. Target screen = the screen containing the mouse pointer at show time (`NSEvent.mouseLocation` tested against each `NSScreen.frame`), falling back to `NSScreen.main`. This puts the window where the user is looking on multi-monitor setups instead of always on the primary display.
 4. **Validate any restored frame.** `cm.windowFrame` (user-dragged position, §9.1) is applied only if the restored rect, inset by 40 pt, intersects some current screen's `visibleFrame`; otherwise discard it and fall back to rule 3. This handles the classic failure: window saved on an external monitor that's now unplugged.
 5. **Re-clamp on display changes.** Observe `NSApplication.didChangeScreenParametersNotification` (fires on monitor plug/unplug, resolution change, Dock resize) and, if the panel is visible, re-run rules 1–4 with an animated `setFrame`. Same observer re-anchors the chip (top-right, rule 3 mirrored to `visible.maxY`).
-6. **Let the user resize within bounds.** `styleMask` gains `.resizable`; enforce aspect with `panel.contentAspectRatio` and floor with `minSize` (~240 pt wide) so a resize can't produce an unusable sliver.
+6. **Let the user resize within bounds.** `styleMask` gains `.resizable`; floor with `minSize` (~240 pt wide) so a resize can't produce an unusable sliver. **Revised post-M2** (see the addendum below): free-form resize, not aspect-locked via `panel.contentAspectRatio` — real usage showed the aspect lock actively fighting sites like Instagram/TikTok, whose desktop layout needs real width to render without clipping, not just a bigger 9:16 rectangle. The channel's `preferredAspect` still shapes the *initial* frame on a fresh open (rule 2 above); it no longer constrains what the user resizes it to afterward, and rule 5's re-clamp on display change preserves whatever shape the user last chose rather than snapping back to the channel default.
 
 AC for the implementing task: on a 13" laptop with the Dock on the bottom, default show fits fully inside the visible area; dragging the window to an external monitor, quitting, unplugging the monitor, and relaunching shows the window on the laptop screen, not off-space.
 
@@ -488,6 +488,56 @@ height, on an unusually narrow display (e.g. a tight split-screen). Not
 addressed here — a real fix (wrapping to multiple rows, or a scrollable
 row) is more scope than "add two channels" warrants; flagging so it isn't
 silently forgotten if a 6th channel is ever added.
+
+## Post-M4 bugfix round: browser escape, resize lock, window never closing
+
+Three real bugs reported after using the app, all fixed together:
+
+- **"TikTok opened in the actual browser."** `FeedPanel`'s `WKWebView` had no
+  `uiDelegate`. Per WebKit's default behavior on macOS, a `target="_blank"`
+  link or `window.open()` call (TikTok's login modal has "Continue with
+  Facebook/Google/Apple" buttons that do this) falls through to the OS
+  opening it in the user's *default* browser — a different cookie jar than
+  the app's isolated `WKWebsiteDataStore`, so any login there never carries
+  back into the app. Fixed with a `WKUIDelegate` conformance implementing
+  `webView(_:createWebViewWith:for:windowFeatures:)`: loads the request in
+  the same shared webview and returns `nil` instead of letting it escape.
+  **Known trade-off, accepted:** a popup-based OAuth flow that relies on
+  `window.opener`/`postMessage` back to the original page (rather than a
+  redirect) can end up on a dead-end "you may close this window" page
+  instead of a real popup — still fully contained in the app's own webview
+  (so at worst it's a stuck page you can reload/navigate away from), which
+  is strictly better than the previous behavior of silently logging in
+  somewhere the app can never see.
+- **"I can't resize to fit my desktop."** `contentAspectRatio` was locking
+  every live user resize to the channel's fixed aspect (9:16 for video
+  channels) — exactly what made Instagram/TikTok's desktop layout clip,
+  since those sites need real width, not just a bigger 9:16 rectangle.
+  Removed both assignments (`configure()` and `performShow`); `preferredAspect`
+  still shapes the *initial* frame on a fresh open, it just no longer
+  constrains resizing afterward. This required a matching fix in
+  `WindowGeometry.reclamped` (§7.1 rule 5's display-change safety net) —
+  without it, `reclamped` would silently snap a freely-resized window back
+  to the channel's fixed aspect on the next monitor plug/unplug or
+  resolution change, re-introducing the same complaint one event later.
+  `reclamped` now derives its clamp aspect from the *current frame's own*
+  proportions instead of the channel default, so it only ever shrinks an
+  oversized frame to fit a smaller screen — never reshapes it.
+- **"It opens, but doesn't close after the prompt ends."** The real root
+  cause: opening the window manually (menu's "Show Window Now" or
+  `/claude-maxx now`/`setup`) with zero active sessions puts `state` into
+  `.showing`. `handleStart` used to call `enterPending()` unconditionally on
+  every 0→1 session transition, regardless of current `state` — so a real
+  prompt starting afterward clobbered `state` from `.showing` back to
+  `.pending`, even though the window was still visibly open. When that
+  prompt's `/stop` later drove the count back to 0, `handleWaitEnded` saw
+  `.pending`/`.offering` instead of `.showing` and took the chip-dismiss
+  cleanup path — `hideWindowAction()` never ran, and the window stayed open
+  forever. Fixed by guarding `enterPending()` on `state == .idle`: a 0→1
+  transition while state is already SHOWING/ALERTING (the manual-open case)
+  now just lets the session count update without disturbing the
+  presentation state, so the window continues as part of that same episode
+  and closes normally once the real session ends.
 
 ## Naming conventions for this implementation
 

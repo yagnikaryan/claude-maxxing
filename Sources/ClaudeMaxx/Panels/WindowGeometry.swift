@@ -118,11 +118,25 @@ enum WindowGeometry {
     ) -> NSRect {
         guard isRestorable(currentFrame, screens: screens) else {
             // Screen unplugged mid-session — same fallback as resolvedFrame.
+            // The old screen (and whatever shape the user resized to on it)
+            // is gone, so falling back to the channel's default aspectRatio
+            // for a fresh placement is reasonable here.
             let target = targetScreen(mouseLocation: mouseLocation, screens: screens, fallback: fallbackScreen)
             return freshFrame(desiredSize: currentFrame.size, aspectRatio: aspectRatio, screen: target, corner: corner)
         }
         let screen = containingScreen(for: currentFrame, screens: screens, fallback: fallbackScreen)
-        let size = clampedSize(desired: currentFrame.size, aspectRatio: aspectRatio, visibleFrame: screen.visibleFrame)
+        // Preserve currentFrame's OWN proportions, not the channel's fixed
+        // aspectRatio. Reclamping (rule 5) is a "keep it on-screen" safety
+        // net for display changes, not a live aspect-ratio enforcer — that
+        // AppKit-level lock (contentAspectRatio) was deliberately removed
+        // from FeedPanel so users can freely resize to fit sites like
+        // Instagram/TikTok. Passing the fixed channel aspect here would
+        // silently snap a freely-resized window back to 9:16 on the very
+        // next monitor plug/unplug or resolution change — undoing that fix.
+        // clampedSize still shrinks an oversized frame to fit a smaller
+        // screen; it just does so proportionally to the user's own shape.
+        let liveAspect = currentFrame.width > 0 && currentFrame.height > 0 ? currentFrame.size : aspectRatio
+        let size = clampedSize(desired: currentFrame.size, aspectRatio: liveAspect, visibleFrame: screen.visibleFrame)
         let origin = anchoredOrigin(size: size, visibleFrame: screen.visibleFrame, corner: corner)
         return NSRect(origin: origin, size: size)
     }

@@ -122,4 +122,32 @@ final class WindowGeometryTests: XCTestCase {
         let size = WindowGeometry.minSize(aspectRatio: NSSize(width: 9, height: 16))
         XCTAssertEqual(size, NSSize(width: 240, height: 427))
     }
+
+    // MARK: - Regression: reclamped must not snap a freely-resized window
+    // back to the channel's fixed aspect ratio on a display-change event.
+
+    func testReclampedPreservesUserResizedAspectRatioNotChannelDefault() {
+        let laptop = WindowGeometry.ScreenInfo(
+            frame: NSRect(x: 0, y: 0, width: 1440, height: 900),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1440, height: 875)
+        )
+        // The user freely resized the window much wider than tall — exactly
+        // what FeedPanel's removed contentAspectRatio lock now allows, e.g.
+        // to fit Instagram/TikTok's desktop layout without clipping.
+        let userResizedFrame = NSRect(x: 100, y: 100, width: 900, height: 400)
+
+        let reclamped = WindowGeometry.reclamped(
+            currentFrame: userResizedFrame,
+            aspectRatio: NSSize(width: 9, height: 16),   // channel's fixed default — must NOT win
+            screens: [laptop],
+            mouseLocation: NSPoint(x: 700, y: 400),
+            fallbackScreen: laptop,
+            corner: .bottomRight
+        )
+
+        // Comfortably fits the screen, so the size must be preserved
+        // verbatim — not reshaped toward 9:16 (which would force width down
+        // to roughly 400*9/16 ≈ 225).
+        XCTAssertEqual(reclamped.size, userResizedFrame.size)
+    }
 }

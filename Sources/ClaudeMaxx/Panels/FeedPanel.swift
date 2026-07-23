@@ -113,11 +113,18 @@ final class FeedPanel: NSPanel, FeedPresenting {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         installWebView()
 
-        // Re-set per-channel in show(channel:) once a channel's real
-        // preferredAspect is known; these are just sane up-front defaults.
-        contentAspectRatio = Self.defaultAspect
+        // Deliberately NOT setting contentAspectRatio: that AppKit property
+        // locks live user resizing to a fixed ratio, which fought real usage
+        // — sites like Instagram/TikTok need real desktop width to render
+        // without clipping their own chrome, not just a bigger 9:16 rectangle.
+        // The channel's preferredAspect is still used for the *initial*
+        // frame in performShow (a nice default shape to open at) — it just
+        // no longer constrains what the user resizes it to afterward.
+        // contentMinSize stays as a floor so a resize can't produce an
+        // unusable sliver (SPEC §7.1 rule 6).
         contentMinSize = WindowGeometry.minSize(aspectRatio: Self.defaultAspect)
 
         NotificationCenter.default.addObserver(
@@ -164,7 +171,8 @@ final class FeedPanel: NSPanel, FeedPresenting {
         dragHandle.label.stringValue = channel?.displayName ?? "Claude Maxx"
 
         let aspect = channel?.preferredAspect ?? Self.defaultAspect
-        contentAspectRatio = aspect
+        // aspect still drives the *initial* frame below and the min-size
+        // floor — just not a live contentAspectRatio lock (see configure()).
         contentMinSize = WindowGeometry.minSize(aspectRatio: aspect)
 
         // Reload only when switching channels/URLs, so pause→show on the
@@ -272,5 +280,28 @@ extension FeedPanel: WKNavigationDelegate {
         // Re-applies the flag after every real navigation/reload, matching
         // §8.2 ("native toggles this flag").
         activeChannel?.setAutoAdvance(settings.autoAdvance, in: webView)
+    }
+}
+
+// MARK: - WKUIDelegate
+
+extension FeedPanel: WKUIDelegate {
+    /// Without a `uiDelegate` implementing this, WebKit has no way to honor
+    /// a `target="_blank"` link or `window.open()` call — on macOS that
+    /// falls through to the OS opening the URL in the user's *default*
+    /// browser instead of the app's own contained webview (the real cause
+    /// behind "why did TikTok open in the browser"). Loading the request in
+    /// the same shared webview and returning `nil` (no second WKWebView
+    /// created) keeps everything inside the one panel SPEC §8.1 describes.
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if navigationAction.targetFrame == nil {
+            webView.load(navigationAction.request)
+        }
+        return nil
     }
 }

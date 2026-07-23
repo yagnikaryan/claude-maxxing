@@ -231,7 +231,19 @@ final class Orchestrator {
         if becameActive {
             waitStartedAt = t
             skippedThisWait = false
-            if settings.mode != .off {
+            // Guard on `state == .idle`: a 0→1 transition can happen while
+            // state is already SHOWING/ALERTING if the window was opened
+            // manually (Show Window Now / /claude-maxx now/setup) before this
+            // prompt started. Unconditionally calling enterPending() used to
+            // clobber that back to .pending — the window stayed visibly open
+            // on screen, but the state machine "forgot" it was in a content
+            // episode. When the prompt's Stop later drove the count back to
+            // 0, handleWaitEnded saw .pending/.offering (whatever the
+            // clobbered debounce cycle landed on) instead of .showing, so it
+            // took the chip-dismiss cleanup path and never called
+            // hideWindowAction() — the window would silently stay open
+            // forever. Only enter PENDING from a genuine idle start.
+            if settings.mode != .off && state == .idle {
                 enterPending(at: t)
             }
         }
