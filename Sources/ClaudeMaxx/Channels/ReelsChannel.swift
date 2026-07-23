@@ -34,7 +34,9 @@ final class ReelsChannel: ContentChannel {
     }
 
     func pause(in webView: WKWebView) {
-        webView.evaluateJavaScript("document.querySelector('video')?.pause();")
+        // All videos, not just the first — feed DOMs keep neighboring
+        // (preloading) players around, and any of them can carry audio.
+        webView.evaluateJavaScript("document.querySelectorAll('video').forEach(v => v.pause());")
     }
 
     func attention(in webView: WKWebView) {
@@ -87,9 +89,13 @@ final class ReelsChannel: ContentChannel {
           }
 
           setInterval(() => {
-            if (!window.__cmAutoAdvance) return;
             const v = document.querySelector('video');
             if (!v) return;
+            // __cmHidden: native sets this on window hide (and clears it on
+            // show) — force-pause anything that starts while hidden, since a
+            // one-shot pause() before hide can race a still-loading page.
+            if (window.__cmHidden) { if (!v.paused) v.pause(); return; }
+            if (!window.__cmAutoAdvance) return;
             v.loop = false;
             if (!v.__cmHooked) { v.__cmHooked = true; v.addEventListener('ended', advance); }
             if (v.duration && isFinite(v.duration)) {

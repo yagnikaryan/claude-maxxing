@@ -154,7 +154,7 @@ final class Menu: NSObject, NSMenuDelegate {
         // the switch live instead of only taking effect on the next show —
         // otherwise picking a second channel to log into does nothing until
         // the window is closed and reopened.
-        orchestrator.switchChannelIfShowing()
+        orchestrator.refreshIfShowing()
     }
 
     @objc private func showWindowNow() {

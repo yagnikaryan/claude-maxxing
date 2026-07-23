@@ -20,6 +20,16 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/stop?sid=$sid\" > /dev/null || true"
+          }
+        ]
+      }
+    ],
     "Notification": [
       {
         "hooks": [

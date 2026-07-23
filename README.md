@@ -25,7 +25,7 @@ swift run
 one-time steps below and aren't in this repo yet — for now, do them by hand:
 
 1. Merge [`hooks-settings.json`](./hooks-settings.json) into `~/.claude/settings.json` (or run
-   `/hooks` inside Claude Code afterward to confirm the three entries registered).
+   `/hooks` inside Claude Code afterward to confirm the four entries registered).
 2. Copy [`claude-config/commands/claude-maxx.md`](./claude-config/commands/claude-maxx.md) to
    `~/.claude/commands/claude-maxx.md`.
 
@@ -42,24 +42,35 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx ask` | mode := ask (persisted, default) | `claude-maxx mode set to ask` |
 | `/claude-maxx off` | mode := off; hide chip + window | `claude-maxx mode set to off` |
 | `/claude-maxx now` | open window immediately | `opening window` |
-| `/claude-maxx setup` | open window immediately, for first-run login | `opening window — pick a channel from the CM menu bar icon to log in...` |
-| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance | `auto-advance on/off` |
+| `/claude-maxx setup` | open window immediately, for first-run login | numbered setup walkthrough (see below) |
+| `/claude-maxx hide` (or `done`) | close the window, keep the current mode | `window hidden — mode stays ask` |
+| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance (applies live if the window is open) | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line |
-| `/claude-maxx status` (or bare) | none | one-line state dump |
+| `/claude-maxx status` (or bare) | none | one-line state dump (`window=visible-pinned` = a setup/now window that ignores prompt endings) |
 
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
-§4.3), and running the command itself briefly triggers `/start`→`/stop` like any prompt, which the
-debounce (below) absorbs harmlessly for most subcommands. `now`/`setup` are the exception — they
-bypass the debounce on purpose (that's the point, an instant window) — see the note below.
+§4.3). Running the command is itself a prompt, so its own `/start`→`/stop` fire too — every
+subcommand except `now`/`setup` suppresses its own turn's window/chip so a settings tweak never
+flashes content at you. `now`/`setup` are the exception on purpose: an instant window is the point.
 
-**Setup / debugging without a prompt:** the menu bar's **"Show Window Now"** item opens the feed
-window on demand — no prompt, no token cost, works even with zero active sessions. Handy both for
-the one-time per-platform login (pick a channel from the menu, sign in, pick the next one — the
-window updates live, no need to close and reopen) and for eyeballing the window while developing.
-`/claude-maxx setup` does the same from inside a Claude Code session — and since that's itself a
-prompt whose own `/start`→`/stop` would otherwise close the window it just opened the instant that
-trivial turn finishes, a window opened this way (or via "Show Window Now") stays open regardless of
-any prompts that run while it's up. Only `/claude-maxx off` or quitting closes it.
+**Setup, step by step** (`/claude-maxx setup`, or the menu bar's **"Show Window Now"** item — the
+menu route costs zero tokens and works with zero active sessions):
+
+1. The content window opens immediately and stays **pinned** open — it ignores prompt endings, so
+   you can take your time. (`/status` shows this as `window=visible-pinned`.)
+2. Pick a channel from the **CM menu bar icon** (Shorts / X / Reading / Reels / TikTok). The open
+   window switches live — no need to close and reopen between platforms.
+3. Log into each platform you want, directly in the window. One-time: cookies persist in the
+   app's own data store across relaunches.
+4. Want to see autoscroll? `/claude-maxx scroll on` applies to the open window immediately.
+5. When you're done, `/claude-maxx hide` closes the window (it has no close button by design —
+   it's a non-activating panel that never steals focus), and your mode is untouched. Then pick
+   how Claude Maxx behaves during real prompts: `/claude-maxx ask` (a chip offers the feed each
+   prompt) or `/claude-maxx auto` (window opens by itself).
+
+A pinned setup window blocks the normal per-prompt flow while it's up (no chip will appear, and
+prompt endings won't close it) — that's what `hide` is for. `/claude-maxx off` also closes it, but
+additionally turns the whole feature off, which is usually not what you want after setup.
 
 ## Config knobs
 
@@ -89,6 +100,7 @@ LAYER 1 · SIGNAL & INTENT (inside Claude Code)
   hooks (automatic, every prompt)       slash command (manual)
   UserPromptSubmit → /start?sid=X       /claude-maxx <arg> → /cmd?arg=<arg>
   Stop             → /stop?sid=X
+  SessionEnd       → /stop?sid=X
   Notification     → /attention
                     │  HTTP, loopback only, 127.0.0.1:8765
 LAYER 2 · ORCHESTRATOR (this daemon)
@@ -110,15 +122,23 @@ truth and neither wire needs to know the other exists.
 
 `scripts/uninstall.sh` doesn't exist yet (M3); to remove Claude Maxx's hooks by hand:
 
-1. In `~/.claude/settings.json`, remove the three hook entries whose `command` contains
-   `127.0.0.1:8765` (`UserPromptSubmit`, `Stop`, `Notification`), leaving any other hooks you have
-   untouched.
+1. In `~/.claude/settings.json`, remove the four hook entries whose `command` contains
+   `127.0.0.1:8765` (`UserPromptSubmit`, `Stop`, `SessionEnd`, `Notification`), leaving any other
+   hooks you have untouched.
 2. Delete `~/.claude/commands/claude-maxx.md`.
 
 Stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`) and settings are left in place —
 nothing here deletes your data.
 
 ## FAQ
+
+**The window opened but never closes when the prompt ends.** Run `/claude-maxx status` and check
+three things. (1) `window=visible-pinned`: it's a setup/"Show Window Now" window, which ignores
+prompt endings by design — `/claude-maxx hide` closes it. (2) `active_sessions` > 1: the window
+closes only when the *last* active Claude Code session finishes its turn — another terminal
+mid-prompt keeps it open, correctly. (3) An interrupted turn (Esc) never fires the `Stop` hook, so
+that session stays counted until its next completed turn, its exit (`SessionEnd` hook), or the
+30-minute watchdog. And remember `mode=off` means no window ever opens in the first place.
 
 **Reels/TikTok don't auto-advance to the next video when one ends — they just scroll.** Known,
 intentional for now. Per SPEC §8.2, the real "next video" chevron selectors on those two platforms

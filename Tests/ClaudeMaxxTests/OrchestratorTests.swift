@@ -22,6 +22,18 @@ final class SpyFeedPresenter: FeedPresenting {
     func attention() {}
 }
 
+/// Chip-side twin of `SpyFeedPresenter`, for driving the ask-mode
+/// OFFERING flow headlessly.
+final class SpyChipPresenter: ChipPresenting {
+    var onSelect: ((String) -> Void)?
+    var onSkip: (() -> Void)?
+    private(set) var presentCount = 0
+    private(set) var dismissCount = 0
+
+    func present() { presentCount += 1 }
+    func dismiss() { dismissCount += 1 }
+}
+
 final class OrchestratorTests: XCTestCase {
 
     /// `Orchestrator.presentWindow()` hops to `DispatchQueue.main.async`
@@ -32,12 +44,17 @@ final class OrchestratorTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }
 
-    private func makeOrchestrator(spy: SpyFeedPresenter, settings: SettingsStore) -> Orchestrator {
+    private func makeOrchestrator(
+        spy: SpyFeedPresenter,
+        settings: SettingsStore,
+        chipSpy: SpyChipPresenter = SpyChipPresenter()
+    ) -> Orchestrator {
         let statsFileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + ".jsonl")
         return Orchestrator(
             settings: settings,
             stats: StatsStore(fileURL: statsFileURL),
+            chipPresenterFactory: { chipSpy },
             feedPresenterFactory: { spy }
         )
     }
@@ -47,7 +64,7 @@ final class OrchestratorTests: XCTestCase {
     /// `.showing, .alerting: break` case never re-presented), so a user could
     /// only ever log into whichever channel happened to be active on first
     /// show.
-    func testSwitchChannelIfShowingRePresentsWithNewChannelWhileWindowIsOpen() {
+    func testRefreshIfShowingRePresentsWithNewChannelWhileWindowIsOpen() {
         let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         settings.channel = "shorts"
         let spy = SpyFeedPresenter()
@@ -58,7 +75,7 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertEqual(spy.shownChannelIDs, ["shorts"])
 
         settings.channel = "xfeed"
-        orchestrator.switchChannelIfShowing()
+        orchestrator.refreshIfShowing()
         drainMainQueue()
         XCTAssertEqual(spy.shownChannelIDs, ["shorts", "xfeed"])
     }
@@ -66,13 +83,13 @@ final class OrchestratorTests: XCTestCase {
     /// Picking a channel while nothing is showing must remain a pure
     /// setting-persist with no presentation side effect (existing behavior,
     /// unchanged) — the fix only adds a live re-point while already open.
-    func testSwitchChannelIfShowingIsNoOpWhileIdle() {
+    func testRefreshIfShowingIsNoOpWhileIdle() {
         let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         let spy = SpyFeedPresenter()
         let orchestrator = makeOrchestrator(spy: spy, settings: settings)
 
         settings.channel = "reading"
-        orchestrator.switchChannelIfShowing()
+        orchestrator.refreshIfShowing()
 
         XCTAssertTrue(spy.shownChannelIDs.isEmpty)
     }
@@ -83,7 +100,7 @@ final class OrchestratorTests: XCTestCase {
     /// channel is actually unpaused, and a genuinely new `/attention` would
     /// then no-op against it (`handleAttention`'s `state == .showing` guard).
     /// Scoping the live-switch fix to SHOWING only avoids that regression.
-    func testSwitchChannelIfShowingIsNoOpWhileAlerting() {
+    func testRefreshIfShowingIsNoOpWhileAlerting() {
         let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         settings.channel = "shorts"
         let spy = SpyFeedPresenter()
@@ -95,7 +112,7 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertEqual(spy.shownChannelIDs, ["shorts"]) // sanity: now alerting, not re-shown
 
         settings.channel = "xfeed"
-        orchestrator.switchChannelIfShowing()
+        orchestrator.refreshIfShowing()
         drainMainQueue()
 
         XCTAssertEqual(spy.shownChannelIDs, ["shorts"]) // unchanged — no-op while alerting
@@ -329,6 +346,102 @@ final class OrchestratorTests: XCTestCase {
         drainMainQueue()
 
         XCTAssertFalse(orchestrator.isWindowVisible, "the watchdog must close even a pinned window")
+        XCTAssertEqual(spy.hideCount, 1)
+    }
+
+    // MARK: - suppressCurrentWait (the /claude-maxx command's own turn)
+
+    /// A `/claude-maxx <settings arg>` turn arms the debounce via its own
+    /// UserPromptSubmit and routinely outlives showDelay — suppression must
+    /// cancel the pending show so the command turn never flashes the window.
+    func testSuppressCurrentWaitCancelsPendingShow() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        settings.mode = .auto
+        settings.showDelay = 0.05
+        let spy = SpyFeedPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings)
+
+        _ = orchestrator.start(sid: "cmd-turn")
+        orchestrator.suppressCurrentWait()   // the embedded curl arrives before the timer fires
+        Thread.sleep(forTimeInterval: 0.2)
+        drainMainQueue()
+
+        XCTAssertFalse(orchestrator.isWindowVisible)
+        XCTAssertTrue(spy.shownChannelIDs.isEmpty)
+
+        _ = orchestrator.stop(sid: "cmd-turn")   // turn ends cleanly, nothing to hide
+        drainMainQueue()
+        XCTAssertEqual(spy.hideCount, 0)
+    }
+
+    /// Same suppression in ask mode, arriving after the chip is already up
+    /// (the timer fired before the curl): the chip must be dismissed.
+    func testSuppressCurrentWaitDismissesOfferedChip() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        settings.mode = .ask
+        settings.showDelay = 0.05
+        let spy = SpyFeedPresenter()
+        let chipSpy = SpyChipPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings, chipSpy: chipSpy)
+
+        _ = orchestrator.start(sid: "cmd-turn")
+        Thread.sleep(forTimeInterval: 0.2)
+        drainMainQueue()
+        XCTAssertEqual(chipSpy.presentCount, 1)   // sanity: chip offered
+
+        orchestrator.suppressCurrentWait()
+        drainMainQueue()
+
+        XCTAssertEqual(chipSpy.dismissCount, 1)
+        XCTAssertFalse(orchestrator.isWindowVisible)
+    }
+
+    /// Suppression must never kill an episode already on screen — a pinned
+    /// setup window (or a real prompt's content) survives an incidental
+    /// settings command like /claude-maxx scroll on.
+    func testSuppressCurrentWaitIsNoOpWhileShowing() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let spy = SpyFeedPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings)
+
+        orchestrator.showNow(openedBy: .cmd)
+        drainMainQueue()
+        XCTAssertTrue(orchestrator.isWindowVisible)
+
+        orchestrator.suppressCurrentWait()
+        drainMainQueue()
+
+        XCTAssertTrue(orchestrator.isWindowVisible)
+        XCTAssertEqual(spy.hideCount, 0)
+    }
+
+    // MARK: - Ask-mode chip flow (the core per-prompt loop)
+
+    /// The full ask-mode cycle: prompt → chip → Watch → window → prompt ends
+    /// → window closes. This is the flow the feature exists for; the pinning
+    /// fix must never leak into it (openedBy .chip is not a manual pin).
+    func testAskModeChipWatchOpensWindowAndStopCloses() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        settings.mode = .ask
+        settings.showDelay = 0.05
+        let spy = SpyFeedPresenter()
+        let chipSpy = SpyChipPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings, chipSpy: chipSpy)
+
+        _ = orchestrator.start(sid: "a")
+        Thread.sleep(forTimeInterval: 0.2)
+        drainMainQueue()
+        XCTAssertEqual(chipSpy.presentCount, 1)
+
+        orchestrator.chipSelect(channelID: "shorts")
+        drainMainQueue()
+        XCTAssertTrue(orchestrator.isWindowVisible)
+        XCTAssertFalse(orchestrator.isWindowPinned, "a chip-opened episode is not a manual pin")
+
+        _ = orchestrator.stop(sid: "a")
+        drainMainQueue()
+
+        XCTAssertFalse(orchestrator.isWindowVisible, "the window must close when the prompt ends")
         XCTAssertEqual(spy.hideCount, 1)
     }
 }

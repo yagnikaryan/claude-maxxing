@@ -208,6 +208,9 @@ final class FeedPanel: NSPanel, FeedPresenting {
         }
         orderFrontRegardless()   // no makeKeyAndOrderFront: never takes key/activates app
 
+        // Lift the hidden-enforcement flag (see hide()) so the channel
+        // scripts stop force-pausing — the user can now play freely.
+        webView.evaluateJavaScript("window.__cmHidden = false;")
         if let channel {
             channel.setAutoAdvance(settings.autoAdvance, in: webView)
         }
@@ -218,6 +221,15 @@ final class FeedPanel: NSPanel, FeedPresenting {
             guard let self else { return }
             self.settings.windowFrame = NSStringFromRect(self.frame)
             self.orderOut(nil)
+            // The one-shot channel.pause() the orchestrator fires before
+            // hide races page load: on a short prompt the site is often
+            // still loading, no <video> exists yet to pause, and the video
+            // then autoplays audio into a hidden window. __cmHidden makes
+            // the pause *persistent*: the channels' 500 ms poll force-pauses
+            // any video that appears while it's set. Re-asserted in
+            // didFinish below because a full navigation replaces `window`
+            // and wipes the flag.
+            self.webView.evaluateJavaScript("window.__cmHidden = true;")
             // Deliberately does NOT clear activeChannel or reload — the
             // webview stays alive so relaunch/resume keeps login + feed
             // position (SPEC decision #9).
@@ -277,8 +289,12 @@ final class FeedPanel: NSPanel, FeedPresenting {
 
 extension FeedPanel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Re-applies the flag after every real navigation/reload, matching
-        // §8.2 ("native toggles this flag").
+        // Re-applies the flags after every real navigation/reload, matching
+        // §8.2 ("native toggles this flag"). __cmHidden must be re-asserted
+        // here because a navigation that *completes after hide()* runs in a
+        // fresh window object — exactly the "audio kept playing after the
+        // window closed" race this flag exists for.
+        webView.evaluateJavaScript("window.__cmHidden = \(!isVisible);")
         activeChannel?.setAutoAdvance(settings.autoAdvance, in: webView)
     }
 }

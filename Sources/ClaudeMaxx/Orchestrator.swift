@@ -183,20 +183,37 @@ final class Orchestrator {
         queue.sync { handleShowNow(openedBy: openedBy) }
     }
 
-    /// Re-resolves `settings.channel` and re-points the shared webview while
-    /// a content episode is already open — the fix for Menu's channel picker
-    /// while the setup/login window is up (multiple platforms to sign into
-    /// in one open episode). A no-op outside SHOWING, including ALERTING:
-    /// re-presenting fresh content there would leave `state` at `.alerting`
-    /// (still "paused, awaiting attention") while the new channel is actually
-    /// unpaused and playing, and `handleAttention`'s `state == .showing`
-    /// guard (§6) would then no-op a genuinely new `/attention` until the
-    /// user interacts — so channel switching during an attention alert stays
-    /// a persist-only no-op, same as while idle. Deliberately does not touch
-    /// state/timers/stats otherwise — it is not a new content episode, just
-    /// a live re-point of the current one.
-    func switchChannelIfShowing() {
-        queue.sync { handleSwitchChannelIfShowing() }
+    /// Re-presents the current settings while a content episode is already
+    /// open: re-resolves `settings.channel` and re-points the shared webview
+    /// (Menu's channel picker during a setup/login session — multiple
+    /// platforms to sign into in one open episode) and re-applies
+    /// `settings.autoAdvance` live (`/claude-maxx scroll on|off` while the
+    /// window is up — without this the toggle only took effect on the *next*
+    /// open, making autoscroll untestable in a setup session). A no-op
+    /// outside SHOWING, including ALERTING: re-presenting fresh content
+    /// there would leave `state` at `.alerting` (still "paused, awaiting
+    /// attention") while the new channel is actually unpaused and playing,
+    /// and `handleAttention`'s `state == .showing` guard (§6) would then
+    /// no-op a genuinely new `/attention` until the user interacts — so a
+    /// refresh during an attention alert stays a persist-only no-op, same
+    /// as while idle. Deliberately does not touch state/timers/stats — it
+    /// is not a new content episode, just a live re-point of the current one.
+    func refreshIfShowing() {
+        queue.sync { handleRefreshIfShowing() }
+    }
+
+    /// Suppresses presentation for the current wait only — cancels PENDING
+    /// or dismisses OFFERING without touching the session count. Called by
+    /// Router for every non-window-opening `/cmd` arg (`scroll on`, `status`,
+    /// `ask`, …): the `/claude-maxx` command is itself a Claude Code prompt,
+    /// so its own `UserPromptSubmit` arms the debounce, and a model turn
+    /// routinely outlives `showDelay` — without this, a plain settings
+    /// command flashes the window (auto) or chip (ask) for its own turn.
+    /// SHOWING/ALERTING are left alone: an episode already on screen (e.g.
+    /// a pinned setup window, or a real prompt's content in another session)
+    /// must not be killed by an incidental settings command.
+    func suppressCurrentWait() {
+        queue.sync { handleSuppressCurrentWait() }
     }
 
     /// ChipPanel hook, wired via `chipPresenter.onSelect` above — not called
@@ -224,6 +241,15 @@ final class Orchestrator {
     /// be shown.
     var isWindowVisible: Bool {
         queue.sync { state == .showing || state == .alerting }
+    }
+
+    /// True only while a *manually pinned* episode is on screen (Show Window
+    /// Now / `/claude-maxx now`/`setup`) — the kind that ignores prompt
+    /// endings and only closes via `/claude-maxx off`/`hide` or the
+    /// watchdog. Surfaced in `/status` so "why isn't the window closing?"
+    /// is answerable without reading this file.
+    var isWindowPinned: Bool {
+        queue.sync { (state == .showing || state == .alerting) && isManuallyPinned }
     }
 
     // MARK: Private handlers (assume already on `queue`)
@@ -438,9 +464,27 @@ final class Orchestrator {
         }
     }
 
-    private func handleSwitchChannelIfShowing() {
+    private func handleRefreshIfShowing() {
         guard state == .showing else { return }
         presentWindow()
+    }
+
+    private func handleSuppressCurrentWait() {
+        switch state {
+        case .pending:
+            showTimer?.cancel()
+            showTimer = nil
+            skippedThisWait = true
+            enterIdle()
+        case .offering:
+            // No `.chip(action: .skip)` stats event — the user didn't skip;
+            // their own command turn is just declining to self-present.
+            dismissChip()
+            skippedThisWait = true
+            enterIdle()
+        case .idle, .showing, .alerting:
+            break
+        }
     }
 
     private func handleChipSelect(channelID: String) {

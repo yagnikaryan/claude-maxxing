@@ -83,7 +83,29 @@ final class Router {
     // MARK: - /cmd grammar (§4.2)
 
     private func handleCmd(_ request: HTTPRequestLine) -> String {
-        let arg = (request.query["arg"] ?? "").trimmingCharacters(in: .whitespaces)
+        // "+" → " ": form-style encoding of a space, which URLComponents
+        // deliberately does not decode in query items — accepted here so a
+        // hand-typed `curl "?arg=scroll+on"` behaves like the command file's
+        // properly percent-encoded `scroll%20on`.
+        let arg = (request.query["arg"] ?? "")
+            .replacingOccurrences(of: "+", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+
+        // Every arg except `now`/`setup` (which *want* the window) first
+        // suppresses the current wait's presentation: this /cmd request is
+        // almost always the embedded curl of the `/claude-maxx` turn itself,
+        // whose own UserPromptSubmit already armed the debounce — and a
+        // model turn routinely outlives showDelay, so without this a plain
+        // settings command flashes the window/chip for its own turn.
+        // (`off` gets the stronger commandOff below, which also closes an
+        // open window.)
+        switch arg {
+        case "now", "setup", "off":
+            break
+        default:
+            orchestrator.suppressCurrentWait()
+        }
+
         switch arg {
         case "auto":
             settings.mode = .auto
@@ -100,13 +122,26 @@ final class Router {
             return "opening window"
         case "setup":
             orchestrator.showNow(openedBy: .cmd)
-            return "opening window — pick a channel from the CM menu bar icon to log in, then /claude-maxx off to hide it when done (it has no close button by design — non-activating panel, SPEC §7)"
+            return """
+                opening window — Claude Maxx setup:
+                1. The window that just opened stays pinned open (it ignores prompt endings) so you can take your time.
+                2. Pick a channel from the CM menu bar icon (Shorts / X / Reading / Reels / TikTok) — the open window switches live.
+                3. Log into each platform you want directly in the window. One-time: logins persist across relaunches.
+                4. Test autoscroll with /claude-maxx scroll on|off — it applies to the open window immediately.
+                5. Done? /claude-maxx hide closes the window (it has no close button by design). Then pick a mode: /claude-maxx ask (a chip offers the feed each prompt) or auto (opens by itself while prompts run).
+                """
         case "scroll on":
             settings.autoAdvance = true
+            orchestrator.refreshIfShowing()   // apply to an already-open window, not just the next show
             return "auto-advance on"
         case "scroll off":
             settings.autoAdvance = false
+            orchestrator.refreshIfShowing()
             return "auto-advance off"
+        case "hide", "done":
+            let mode = settings.mode.rawValue
+            orchestrator.commandOff()
+            return "window hidden — mode stays \(mode)"
         case "stats":
             return statsLine()
         case "status", "":
@@ -130,7 +165,12 @@ final class Router {
     // MARK: - Shared body builders
 
     private func statusLine() -> String {
-        "mode=\(settings.mode.rawValue) active_sessions=\(orchestrator.activeSessionCount) window=\(orchestrator.isWindowVisible ? "visible" : "hidden") auto_advance=\(settings.autoAdvance)"
+        // "visible-pinned" = a Show Window Now / now/setup window that
+        // ignores prompt endings — the answer to "why isn't it closing?".
+        let window = orchestrator.isWindowPinned
+            ? "visible-pinned"
+            : (orchestrator.isWindowVisible ? "visible" : "hidden")
+        return "mode=\(settings.mode.rawValue) active_sessions=\(orchestrator.activeSessionCount) window=\(window) auto_advance=\(settings.autoAdvance)"
     }
 
     private func statsLine() -> String {

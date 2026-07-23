@@ -86,6 +86,100 @@ final class HookServerTests: XCTestCase {
         XCTAssertTrue(response.contains("CM menu bar"))
     }
 
+    /// Builds a Router around injected spies — needed by every test whose
+    /// /cmd path would otherwise materialize a real FeedPanel/WKWebView.
+    private func makeSpyRouter() -> (Router, SpyFeedPresenter, SettingsStore) {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let statsFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jsonl")
+        let stats = StatsStore(fileURL: statsFileURL)
+        let spy = SpyFeedPresenter()
+        let orchestrator = Orchestrator(
+            settings: settings,
+            stats: stats,
+            chipPresenterFactory: { SpyChipPresenter() },
+            feedPresenterFactory: { spy }
+        )
+        return (Router(settings: settings, stats: stats, orchestrator: orchestrator), spy, settings)
+    }
+
+    private func drainMainQueue() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    /// `--data-urlencode` (the command file's encoding) sends a space as
+    /// `+`, which URLComponents does not decode — the Router must.
+    func testCmdScrollOnAcceptsPlusEncodedSpace() {
+        let (router, _, settings) = makeSpyRouter()
+        settings.autoAdvance = false
+
+        let response = router.route(HTTPRequestLine.parse("GET /cmd?arg=scroll+on HTTP/1.1")!)
+
+        XCTAssertEqual(response, "auto-advance on")
+        XCTAssertTrue(settings.autoAdvance)
+    }
+
+    /// `scroll on|off` while the window is open must re-present so the
+    /// toggle applies to the live webview, not just the next show.
+    func testCmdScrollToggleAppliesLiveWhileWindowOpen() {
+        let (router, spy, settings) = makeSpyRouter()
+
+        _ = router.route(HTTPRequestLine.parse("GET /cmd?arg=setup HTTP/1.1")!)
+        drainMainQueue()
+        XCTAssertEqual(spy.shownChannelIDs.count, 1)
+
+        _ = router.route(HTTPRequestLine.parse("GET /cmd?arg=scroll%20off HTTP/1.1")!)
+        drainMainQueue()
+
+        XCTAssertFalse(settings.autoAdvance)
+        XCTAssertEqual(spy.shownChannelIDs.count, 2, "the open window must be re-presented with the new flag")
+    }
+
+    /// `hide` closes a pinned setup window but leaves the mode alone —
+    /// unlike `off`, which was the only way to close one before and
+    /// silently disabled the whole feature as a side effect.
+    func testCmdHideClosesPinnedWindowWithoutChangingMode() {
+        let (router, spy, settings) = makeSpyRouter()
+        settings.mode = .ask
+
+        _ = router.route(HTTPRequestLine.parse("GET /cmd?arg=setup HTTP/1.1")!)
+        drainMainQueue()
+
+        let response = router.route(HTTPRequestLine.parse("GET /cmd?arg=hide HTTP/1.1")!)
+        drainMainQueue()
+
+        XCTAssertEqual(response, "window hidden — mode stays ask")
+        XCTAssertEqual(spy.hideCount, 1)
+        XCTAssertEqual(settings.mode, .ask)
+    }
+
+    /// A settings-only /cmd (scroll, stats, status, mode) arriving during
+    /// its own turn's PENDING must cancel the pending show — the command
+    /// turn itself must never flash the window.
+    func testCmdSettingsArgSuppressesItsOwnTurnsPendingShow() {
+        let (router, spy, settings) = makeSpyRouter()
+        settings.mode = .auto
+        settings.showDelay = 0.05
+
+        _ = router.route(HTTPRequestLine.parse("GET /start?sid=cmd-turn HTTP/1.1")!)
+        _ = router.route(HTTPRequestLine.parse("GET /cmd?arg=stats HTTP/1.1")!)
+        Thread.sleep(forTimeInterval: 0.2)
+        drainMainQueue()
+
+        XCTAssertTrue(spy.shownChannelIDs.isEmpty, "a settings command's own turn must not open the window")
+    }
+
+    /// /status distinguishes a pinned (setup/now) window from a normal one.
+    func testStatusShowsPinnedWindow() {
+        let (router, _, _) = makeSpyRouter()
+
+        _ = router.route(HTTPRequestLine.parse("GET /cmd?arg=setup HTTP/1.1")!)
+        drainMainQueue()
+
+        let status = router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!)
+        XCTAssertTrue(status.contains("window=visible-pinned"), "got: \(status)")
+    }
+
     func testStatsJSONReturnsValidJSON() throws {
         let router = makeRouter()
         let body = router.route(HTTPRequestLine.parse("GET /stats.json HTTP/1.1")!)

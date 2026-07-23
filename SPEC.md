@@ -62,11 +62,15 @@ Lives in `~/.claude/settings.json` (global — this behavior is per-user, not pe
       "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/start?sid=$sid\" > /dev/null || true" }]}],
     "Stop": [{ "hooks": [{ "type": "command",
       "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/stop?sid=$sid\" > /dev/null || true" }]}],
+    "SessionEnd": [{ "hooks": [{ "type": "command",
+      "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/stop?sid=$sid\" > /dev/null || true" }]}],
     "Notification": [{ "hooks": [{ "type": "command",
       "command": "curl -s --max-time 1 http://127.0.0.1:8765/attention > /dev/null || true" }]}]
   }
 }
 ```
+
+`SessionEnd` (added post-integration) exists because `Stop` does **not** fire when the user interrupts a turn (Esc) or the session dies — that orphans a `/start` and, until the next completed turn in that session, only the 30-minute watchdog would close the window. `SessionEnd` fires when a session terminates (`/clear`, exit, logout), so a closed session cleans up immediately. `/stop` for an already-deregistered sid is a no-op (§5), so the duplicate signal is harmless.
 
 ### 3.2 Invariants for this layer
 
@@ -82,16 +86,18 @@ Lives in `~/.claude/settings.json` (global — this behavior is per-user, not pe
 
 ```markdown
 ---
-description: Control Claude Maxx (off | ask | auto | now | scroll on | scroll off | status)
+description: Control Claude Maxx (off | ask | auto | now | setup | hide | scroll on | scroll off | stats | status)
 allowed-tools: Bash(curl:*)
 ---
 
-!curl -s --max-time 1 "http://127.0.0.1:8765/cmd?arg=$ARGUMENTS" || echo "daemon not running"
+!curl -sG --max-time 1 --data-urlencode "arg=$ARGUMENTS" "http://127.0.0.1:8765/cmd" || echo "daemon not running"
 
 Reply with only the command output shown above, verbatim, and nothing else.
 ```
 
 Mechanics: the `!`-prefixed line executes as bash *before* the prompt is sent, and its stdout is injected into the prompt context; `$ARGUMENTS` interpolates whatever the user typed after `/claude-maxx`; `allowed-tools: Bash(curl:*)` scopes what the command may execute. The trailing instruction pins the model to echoing the daemon's response so the turn costs a few tokens and adds no noise.
+
+`-G --data-urlencode` (not a bare `?arg=$ARGUMENTS`) is load-bearing: multi-word args like `scroll on` contain a space, which makes a raw interpolated URL invalid — curl errors out and the daemon never sees the command at all. `--data-urlencode` form-encodes the space as `+`, which the Router normalizes back (§4.2).
 
 ### 4.2 Command grammar
 
@@ -101,16 +107,19 @@ Mechanics: the `!`-prefixed line executes as bash *before* the prompt is sent, a
 | `/claude-maxx ask` | mode := ask (persisted, default) | `claude-maxx mode set to ask` |
 | `/claude-maxx off` | mode := off; hide chip + window | `claude-maxx mode set to off` |
 | `/claude-maxx now` | open window immediately | `opening window` |
-| `/claude-maxx setup` | open window immediately (alias of `now` with setup-oriented copy) — also reachable with zero token cost via the menu bar's "Show Window Now" item | `opening window — pick a channel from the CM menu bar icon to log in, then /claude-maxx off to hide it when done (it has no close button by design — non-activating panel, §7)` |
-| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance | `auto-advance on/off` |
+| `/claude-maxx setup` | open window immediately (alias of `now` with a numbered setup walkthrough as its response) — also reachable with zero token cost via the menu bar's "Show Window Now" item | multi-line walkthrough: pinned-window semantics, menu-bar channel picker, per-platform login, live `scroll on|off` testing, `hide` to finish, then pick `ask`/`auto` |
+| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance; applies live to an already-open window via `refreshIfShowing()` | `auto-advance on/off` |
+| `/claude-maxx hide` (alias `done`) | close the window (pinned or not) *without* changing mode — `off` closes it too but disables the whole feature as a side effect, which is wrong for "I'm done setting up" | `window hidden — mode stays <mode>` |
 | `/claude-maxx stats` | none | today's aggregate line (§9.3) |
-| `/claude-maxx status` (or bare) | none | one-line state dump |
+| `/claude-maxx status` (or bare) | none | one-line state dump; `window=visible-pinned` distinguishes a setup/now window from a normal episode |
+
+**Self-suppression:** every arg except `now`/`setup` first calls `Orchestrator.suppressCurrentWait()` — the command is itself a prompt, its own `UserPromptSubmit` arms the debounce, and a model turn routinely outlives `showDelay`, so without this a plain `scroll on` flashes the window (auto) or chip (ask) for its own turn. Suppression cancels PENDING / dismisses OFFERING only; SHOWING/ALERTING episodes (a pinned setup window, or another session's real content) are never touched. The Router also normalizes `+` → space in `arg` (the command file's `--data-urlencode` form-encodes spaces as `+`).
 
 ### 4.3 Known limitations (accepted, by design)
 
 1. **Costs a model turn.** Custom slash commands are prompts under the hood. Acceptable for occasional mode-setting; this is why per-prompt choice lives in the chip (§7), not here.
 2. **Cannot run mid-response.** It queues until the current turn ends. Mode changes therefore apply to the *next* prompt. Do not attempt to fix this — no third-party mechanism can inject interactive UI into a streaming turn.
-3. **`UserPromptSubmit` fires for slash commands too**, so `/claude-maxx status` itself triggers `/start` then `/stop`. Harmless (the wait is shorter than `showDelay`), but Layer 2's debounce is what makes it harmless — do not remove the debounce without revisiting this.
+3. **`UserPromptSubmit` fires for slash commands too**, so `/claude-maxx status` itself triggers `/start` then `/stop`. The debounce alone turned out not to make this harmless — a model turn routinely outlives `showDelay` even for a trivial echo, so the command's own turn used to flash the window/chip. Fixed by explicit self-suppression in the Router (§4.2, "Self-suppression") on top of the debounce; do not remove either without revisiting this.
 
 ## 5. Layer 2 — HTTP interface (complete API spec)
 
@@ -571,6 +580,59 @@ real prompts that happen to run while it's up — including ones that started
 assumption that such a prompt ending should close it. That's the correct
 model for the feature's actual purpose (log into a channel, on your own
 timeline) rather than an accident of implementation order.
+
+## Post-integration bugfix round: scroll toggle, self-flash, hidden audio, setup UX
+
+Four issues reported from live use of `/claude-maxx scroll on`, `setup`, and ask-mode
+testing, fixed together:
+
+- **`/claude-maxx scroll on` never reached the daemon.** The command file
+  interpolated `$ARGUMENTS` raw into the URL (`?arg=scroll on`) — a space
+  makes the URL invalid, curl fails, and the daemon never sees the command.
+  Every multi-word arg was silently broken since M1. Fixed with
+  `curl -G --data-urlencode "arg=$ARGUMENTS"`; since `--data-urlencode`
+  form-encodes a space as `+` (which `URLComponents` deliberately does not
+  decode), the Router now normalizes `+` → space before matching.
+- **The command's own turn flashed the window/chip.** §4.3.3's assumption
+  ("the wait is shorter than showDelay") doesn't hold — a model turn
+  routinely takes >4 s even for a verbatim echo. Every non-window-opening
+  `/cmd` arg now calls `Orchestrator.suppressCurrentWait()` first: cancels
+  PENDING or dismisses OFFERING (no `chip skip` stats event — the user
+  didn't skip anything), sets `skippedThisWait`, and never touches
+  SHOWING/ALERTING (a pinned setup window or another session's real episode
+  must survive an incidental settings command).
+- **Audio kept playing after the window closed.** The one-shot
+  `channel.pause()` before hide races page load: on a short auto-mode
+  episode the site is often still loading at hide time, no `<video>` exists
+  yet to pause, and the video then autoplays audio into a hidden window.
+  Fix: `FeedPanel` owns a channel-agnostic `window.__cmHidden` flag — set
+  on `hide()`, cleared on show, and re-asserted in `didFinish` (a
+  navigation completing *after* hide runs in a fresh `window` object that
+  wiped the flag). The three video channels' 500 ms polls force-pause any
+  video that appears while it's set, so playback can start at most one poll
+  tick before being stopped. Enforcement is deliberately keyed to *hidden*,
+  not "paused": an `/attention` pause while the window is visible must stay
+  one-shot, or the poll would fight the user pressing play during ALERTING.
+  The one-shot `pause()` also now pauses `querySelectorAll('video')`, not
+  just the first match — feed DOMs keep preloading neighbors around.
+- **Setup was unexplained, and `off` was the only way out.** `setup`'s
+  response is now a numbered walkthrough (pinned semantics → menu-bar
+  channel picker → per-platform login → live scroll testing → how to
+  finish). Its old instruction ("then `/claude-maxx off` to hide it") was
+  itself a trap: `off` disables the whole feature as a side effect, so a
+  user who followed it and then wondered why ask mode never showed a chip
+  was left with no signal. New `hide` (alias `done`) closes the window —
+  pinned or not — while leaving the mode alone, and `/status` now reports
+  `window=visible-pinned` so a forgotten setup window (which blocks the
+  per-prompt flow entirely: `handleStart`'s `state == .idle` guard means no
+  chip while it's up, and pinning means no close on /stop) is diagnosable.
+- **Also:** `scroll on|off` now applies to an already-open window
+  (`Orchestrator.refreshIfShowing()`, the renamed-and-generalized
+  `switchChannelIfShowing()` — `performShow` re-applies
+  `settings.autoAdvance` on a same-channel re-present without reloading),
+  instead of only taking effect on the next open; and a `SessionEnd` hook
+  now mirrors `Stop` (§3.1), since `Stop` doesn't fire on user interrupts
+  and a dead session otherwise held the window open until the watchdog.
 
 ## Naming conventions for this implementation
 
