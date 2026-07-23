@@ -668,6 +668,32 @@ back into the terminal returns them. Auto-opened episodes during a prompt
 remain exactly as unobtrusive as before unless the user chooses to
 interact.
 
+## Post-integration bugfix: Instagram login never persisted (UA fingerprinting)
+
+Reported from live use: "I log in, I do the captcha, but the login doesn't
+persist." Diagnosed from the on-disk cookie jar, not guesswork:
+
+- Persistence itself was fine. Even unbundled (bare SwiftPM executable, no
+  bundle id), `WKWebsiteDataStore.default()` stores under
+  `~/Library/WebKit/ClaudeMaxx/` + `~/Library/HTTPStorages/
+  ClaudeMaxx.binarycookies`, keyed by process name, and 8 Instagram
+  cookies (`csrftoken`, `datr`, `ig_did`, …) were present and surviving
+  daemon restarts.
+- What was missing: `sessionid`/`ds_user_id` — the cookies that *are* an
+  Instagram login. Zero occurrences. Instagram accepted the password,
+  served the captcha, and then silently declined to establish a session.
+
+Cause: WKWebView's default macOS UA ends at `(KHTML, like Gecko)` with no
+`Version/x Safari/x` suffix — the fingerprint of an embedded webview.
+Meta (and Google) login flows treat embedded webviews as untrusted and
+withhold session issuance. Fix: `configuration.applicationNameForUserAgent
+= "Version/18.5 Safari/605.1.15"`, which appends the missing suffix to the
+genuine WebKit UA so the composed string is exactly what real Safari
+sends. No spoofing of a different engine — it *is* WebKit, now saying so
+completely. Covered by a FeedPanelTests regression test; bump the version
+string occasionally alongside real Safari releases if a platform starts
+flagging it as stale.
+
 ## Naming conventions for this implementation
 
 - Product/app name: **Claude Maxx**. Executable target / module: `ClaudeMaxx`.

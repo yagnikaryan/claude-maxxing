@@ -72,7 +72,9 @@ final class FeedPanel: NSPanel, FeedPresenting {
     static let dragHandleHeight: CGFloat = 22
 
     private let settings: SettingsStore
-    private let webView: WKWebView
+    /// Internal (not private) only so FeedPanelTests can assert the
+    /// login-critical configuration (UA suffix, persistent data store).
+    let webView: WKWebView
     private let dragHandle = DragHandleView(frame: .zero)
     private(set) var activeChannel: ContentChannel?
 
@@ -84,7 +86,18 @@ final class FeedPanel: NSPanel, FeedPresenting {
         // *persistent* data store — login cookies survive relaunch, per
         // SPEC §8.1 ("each platform is a one-time manual sign-in"). This is
         // the load-bearing distinction; it isn't obvious from the call site.
+        // (Verified working unbundled too: storage lands under
+        // ~/Library/WebKit/ClaudeMaxx keyed by process name.)
         configuration.websiteDataStore = WKWebsiteDataStore.default()
+        // WKWebView's default UA ends at "(KHTML, like Gecko)" — no
+        // "Version/x Safari/x" suffix — which is the fingerprint of an
+        // embedded webview. Meta/Google login flows treat those as
+        // untrusted: Instagram would run the full password+captcha dance
+        // and then silently withhold the `sessionid` cookie, so login could
+        // never persist no matter how the data store was configured.
+        // `applicationNameForUserAgent` appends the suffix to the genuine
+        // WebKit UA, composing exactly what real Safari sends.
+        configuration.applicationNameForUserAgent = "Version/18.5 Safari/605.1.15"
         self.webView = WKWebView(frame: .zero, configuration: configuration)
 
         super.init(

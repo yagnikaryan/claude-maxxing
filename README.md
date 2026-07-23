@@ -160,6 +160,13 @@ this you?" confirmation. Click **"Show Window Now"** in the menu bar (or run `/c
 to open the window on demand, pick each channel from the menu to sign into it in turn — cookies
 persist in the app's own data store after that.
 
+**I logged in (even did the captcha) but I'm logged out again right away.** If you're on a build
+older than the user-agent fix, that's why: WKWebView's default UA lacks Safari's `Version/x
+Safari/x` suffix, and Instagram/Meta treat that fingerprint as an untrusted embedded browser —
+they accept your password, show the captcha, then silently never issue the session cookie. The
+window now presents the full Safari UA, so log in once more and it sticks (cookies live in
+`~/Library/HTTPStorages/ClaudeMaxx.binarycookies` and survive restarts).
+
 **Does this send my prompts anywhere?** No. The daemon binds `127.0.0.1` exclusively (never
 `0.0.0.0`) and never receives prompt text, transcript contents, or your working directory — hooks
 pass only a session id (`sid`). Stats are written only to a local JSONL file and never

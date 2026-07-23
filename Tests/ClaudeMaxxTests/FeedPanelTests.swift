@@ -21,4 +21,18 @@ final class FeedPanelTests: XCTestCase {
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel), "the app itself must never activate")
         XCTAssertFalse(panel.styleMask.contains(.closable), "no close button by design (SPEC §7)")
     }
+
+    /// Regression: without the "Version/x Safari/x" UA suffix, Instagram
+    /// classified the webview as an untrusted embedded browser and silently
+    /// withheld the `sessionid` cookie after a successful password+captcha
+    /// login — so sign-in could never persist. The data store must also
+    /// stay persistent (`.default()`, not `.nonPersistent()`), or logins
+    /// die on relaunch instead.
+    func testWebViewPresentsAsSafariAndPersistsData() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let panel = FeedPanel(settings: settings)
+
+        XCTAssertEqual(panel.webView.configuration.applicationNameForUserAgent, "Version/18.5 Safari/605.1.15")
+        XCTAssertTrue(panel.webView.configuration.websiteDataStore.isPersistent)
+    }
 }
