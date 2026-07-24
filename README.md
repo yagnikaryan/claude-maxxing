@@ -126,8 +126,9 @@ not running until something starts it. Three ways, in the order you'll actually 
 | | |
 |---|---|
 | **Start with Claude Code** (menu bar toggle) | a `SessionStart` hook starts the daemon whenever you open Claude Code. This is the "never think about it" option, and takes effect from the *next* session. `scripts/claude-maxx-hook.sh enable\|disable\|status` is the same switch from a terminal. |
-| `/claude-maxx <anything>` | starts it on demand — the wrapper launches the binary, waits, and re-sends your subcommand, so the first command of the day both starts the daemon and answers. |
-| `./scripts/restart.sh` | starts it, or restarts it onto a newly built binary. |
+| `/claude-maxx <anything>` | starts it on demand. There is no `/claude-maxx start` — a command needs a daemon to receive it — so the wrapper launches the binary first whenever nothing answers, waits, and re-sends your subcommand. `/claude-maxx status` therefore both starts the daemon and reports on it. |
+| [`./scripts/start.sh`](./scripts/start.sh) | the same from a terminal; says `already running` rather than starting a second one. |
+| `./scripts/restart.sh` | restarts it onto a newly built binary (what you want after changing code). |
 
 To stop it: `/claude-maxx quit`, **Quit Claude Maxx** in the menu bar, or
 [`./scripts/stop.sh`](./scripts/stop.sh). Both leave your hooks, logins, and stats alone — it starts again by any
