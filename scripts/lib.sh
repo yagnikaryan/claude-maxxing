@@ -24,12 +24,22 @@ cm_log_path() { printf '%s' "$HOME/Library/Logs/ClaudeMaxx.log"; }
 # One /cmd round-trip. Empty output means nothing is listening.
 cm_send() { curl -sG --max-time 1 --data-urlencode "arg=$1" "$CM_URL/cmd" 2>/dev/null; }
 
-# Detached start. The daemon calls setsid() itself, so it leaves this process
-# group on its own — see main.swift; do not "fix" this by adding job control.
+# Detached start: cm_launch <binary> <repo>. The daemon calls setsid() itself,
+# so it leaves this process group on its own — see main.swift; do not "fix"
+# this by adding job control.
 cm_launch() {
     _log=$(cm_log_path)
     mkdir -p "$(dirname "$_log")" 2>/dev/null
     nohup "$1" >>"$_log" 2>&1 &
+    # Stamp when the daemon was last started from this clone. doctor.sh
+    # compares source mtimes against this rather than against the binary:
+    # `git pull` rewrites source mtimes without changing content, so a binary
+    # comparison reports "stale" while `swift build` correctly does nothing —
+    # a warning the suggested rebuild could never clear.
+    #
+    # Derived from the repo, never from the binary: .build/release is a symlink
+    # into .build/<arch>/, so "$bin/../.." lands in the arch directory instead.
+    [ -n "${2:-}" ] && { : > "$2/.build/.cm-started" 2>/dev/null || true; }
 }
 
 # Poll until the daemon answers, echoing its reply. Non-zero if it never does.
