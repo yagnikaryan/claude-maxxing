@@ -88,8 +88,9 @@ final class FeedPanel: NSPanel, FeedPresenting {
     private(set) var activeChannel: ContentChannel?
     /// Live `window.open()` popups (logins, mostly). Retained here because
     /// `isReleasedWhenClosed` is false and nothing else owns them; entries are
-    /// dropped in each popup's `onClose`.
-    private var popupPanels: [PopupPanel] = []
+    /// dropped in each popup's `onClose`. Internal (not private) so tests can
+    /// assert a popup was hosted rather than swallowed into the feed.
+    private(set) var popupPanels: [PopupPanel] = []
 
     init(settings: SettingsStore = .shared) {
         self.settings = settings

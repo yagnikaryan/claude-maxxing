@@ -74,6 +74,34 @@ final class FeedPanelTests: XCTestCase {
         XCTAssertTrue(popup.styleMask.contains(.nonactivatingPanel), "the app itself must never activate")
     }
 
+    /// End-to-end proof of the popup path, driven through a real WKWebView
+    /// rather than by calling the delegate by hand: a page that calls
+    /// `window.open()` must produce a hosted `PopupPanel` with its own
+    /// webview. Covers both halves of the login failure at once — the old
+    /// code returned nil here (no popup, opener severed), and a JS-initiated
+    /// open is silently discarded unless `javaScriptCanOpenWindowsAutomatically`
+    /// is set, since `evaluateJavaScript` carries no user gesture (neither
+    /// does an auth callback firing after a captcha verifies).
+    func testWindowOpenIsHostedInItsOwnPopupWindow() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let panel = FeedPanel(settings: settings)
+
+        panel.webView.loadHTMLString("<html><body>opener</body></html>", baseURL: URL(string: "https://example.com/")!)
+        let loaded = expectation(for: NSPredicate { _, _ in panel.webView.url != nil && !panel.webView.isLoading },
+                                 evaluatedWith: panel)
+        wait(for: [loaded], timeout: 10)
+
+        panel.webView.evaluateJavaScript("window.open('https://example.com/popup', '_blank');")
+
+        let opened = expectation(for: NSPredicate { _, _ in panel.popupPanels.count == 1 }, evaluatedWith: panel)
+        wait(for: [opened], timeout: 10)
+
+        XCTAssertFalse(
+            panel.popupPanels[0].webView === panel.webView,
+            "the popup must be a second webview, not the feed navigating itself"
+        )
+    }
+
     /// The other half of the contract: identity-keyed reloading must still
     /// load on a real channel switch and on the first show of a session.
     func testLoadsOnChannelSwitchAndFirstShow() {
