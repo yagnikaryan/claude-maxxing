@@ -269,6 +269,43 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertEqual(spy.hideCount, 1)
     }
 
+    /// Regression: `/claude-maxx off` opened the very window it was meant to
+    /// close. Its own UserPromptSubmit armed the 4 s debounce, the window
+    /// opened, and the command only landed 17 s later — the `/cmd` path can
+    /// never be early enough, so the suppression has to happen at submit.
+    func testSuppressedStartNeverPresentsForACommandsOwnTurn() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        settings.mode = .auto
+        settings.showDelay = 0.05
+        let spy = SpyFeedPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings)
+
+        _ = orchestrator.start(sid: "cmd-turn", suppress: true)
+        Thread.sleep(forTimeInterval: 0.2)   // well past showDelay
+        drainMainQueue()
+
+        XCTAssertFalse(orchestrator.isWindowVisible, "a /claude-maxx turn must not flash content")
+        XCTAssertTrue(spy.shownChannelIDs.isEmpty)
+    }
+
+    /// The suppression must stay scoped to the wait it starts. A command typed
+    /// in one session cannot cancel the window another session's prompt
+    /// legitimately owns — only the 0→1 transition sets it.
+    func testSuppressDoesNotCancelAnotherSessionsAlreadyRunningWait() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        settings.mode = .auto
+        settings.showDelay = 0.15
+        let spy = SpyFeedPresenter()
+        let orchestrator = makeOrchestrator(spy: spy, settings: settings)
+
+        _ = orchestrator.start(sid: "worker")                      // real prompt, arms the debounce
+        _ = orchestrator.start(sid: "cmd-turn", suppress: true)     // command in a second session
+        Thread.sleep(forTimeInterval: 0.4)
+        drainMainQueue()
+
+        XCTAssertTrue(orchestrator.isWindowVisible, "the worker session's window must still open")
+    }
+
     /// Regression test for a gap the pinning fix's own review caught:
     /// showNow's `.showing, .alerting: break` branch used to be a pure
     /// no-op when the window was already visible, so a user explicitly

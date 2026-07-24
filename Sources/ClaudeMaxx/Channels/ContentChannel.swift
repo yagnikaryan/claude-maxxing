@@ -34,4 +34,15 @@ extension ContentChannel {
     func load(into webView: WKWebView) {
         webView.load(URLRequest(url: url))
     }
+
+    /// Channels that inject nothing (X hosts the page as-is) still have to
+    /// hand `FeedPanel` something to install.
+    func userScript() -> WKUserScript {
+        WKUserScript(source: "", injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
+
+    /// Safe default because it is gated by `supportsAutoAdvance`: a channel
+    /// that advertises auto-advance provides the real flip (see
+    /// `VideoFeedChannel`), and one that doesn't has nothing to gate.
+    func setAutoAdvance(_ on: Bool, in webView: WKWebView) {}
 }

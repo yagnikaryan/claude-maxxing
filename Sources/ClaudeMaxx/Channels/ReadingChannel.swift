@@ -112,10 +112,6 @@ final class ReadingChannel: ContentChannel {
         webView.loadFileURL(target, allowingReadAccessTo: target)
     }
 
-    /// Protocol requirement only. There is no auto behavior on this channel
-    /// to gate (see the type-level comment).
-    func setAutoAdvance(_ on: Bool, in webView: WKWebView) {}
-
     /// Called before hide (per the protocol's contract). This is the
     /// channel's one chance to capture "where was the reader" before the
     /// window disappears and persist it via `SettingsStore` (§8.3, §9.1).
@@ -136,12 +132,10 @@ final class ReadingChannel: ContentChannel {
         }
     }
 
-    /// Overlays a dismissible banner without touching scroll position
-    /// (§8.4 — "yanking text mid-sentence is hostile"). The
-    /// `NSApp.requestUserAttention` bounce is `FeedPanel`'s job, not this
-    /// channel's (it fires unconditionally regardless of `activeChannel`).
+    /// The `NSApp.requestUserAttention` bounce is `FeedPanel`'s job, not this
+    /// channel's (it fires regardless of `activeChannel`).
     func attention(in webView: WKWebView) {
-        webView.evaluateJavaScript(Self.attentionBannerScript)
+        webView.evaluateJavaScript(AttentionBanner.showScript(accent: "#1a1a1a"))
     }
 
     // MARK: Reading list (persisted, "simple paste-in array" per §8.3)
@@ -366,30 +360,6 @@ final class ReadingChannel: ContentChannel {
         })();
         """
     }
-
-    /// Idempotent (checks for its own id) so repeated `/attention` calls
-    /// against the same loaded page don't stack duplicate banners. Pure
-    /// DOM insertion — never calls `scrollTo`/`scrollIntoView`, per §8.4.
-    private static let attentionBannerScript = """
-        (function() {
-          var id = '__cm-attention-banner';
-          if (document.getElementById(id)) return;
-          var banner = document.createElement('div');
-          banner.id = id;
-          banner.textContent = 'Claude needs input';
-          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
-            'background:#1a1a1a;color:#fff;font:13px -apple-system,sans-serif;' +
-            'padding:8px 36px 8px 12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);';
-          var dismiss = document.createElement('button');
-          dismiss.textContent = String.fromCharCode(215);
-          dismiss.setAttribute('aria-label', 'Dismiss');
-          dismiss.style.cssText = 'position:absolute;right:8px;top:6px;background:transparent;' +
-            'border:none;color:#fff;font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;';
-          dismiss.onclick = function() { banner.remove(); };
-          banner.appendChild(dismiss);
-          document.documentElement.appendChild(banner);
-        })();
-        """
 
     /// Stable (non-randomized) hash for the `cm.scroll.<urlhash>` key
     /// (§9.1, §8.3). Deliberately not `String.hashValue`/`Hasher` — those

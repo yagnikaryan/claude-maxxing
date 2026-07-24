@@ -46,7 +46,7 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
 
 ## Tests
 
-`swift test` — 68 tests, all headless-safe. Note two AppKit limits found the hard way:
+`swift test` — 70 tests, all headless-safe. Note two AppKit limits found the hard way:
 `NSPanel` and `WKWebView` work fine in the test process, but constructing an `NSStatusItem`
 (i.e. a `Menu`) **aborts** it with no window-server connection. That is why
 `Menu.readingSubmenu` is static and takes its target.
@@ -80,6 +80,12 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
   every launcher uses `nohup … &`, which leaves it in the spawning hook's process group where a
   group-wide signal kills it mid-prompt. Do not remove it, and do not add a launcher that
   re-parents it into someone else's group.
+- **`/claude-maxx`'s own turn must not open a window** — its `UserPromptSubmit` hook sends
+  `suppress=1`, decided at submit time. The `/cmd` path cannot do this: a slash command's shell
+  body can take longer than `showDelay` to run (measured 17 s vs 4 s), so by the time the command
+  arrives the window is already up.
+- **Changing `hooks-settings.json` requires users to re-run `install.sh`** — pulling does not
+  update `settings.json`. Add a `doctor.sh` check whenever hook behavior changes.
 - **Never `print()` from the daemon** — stdout is block-buffered into the log file, so the line
   is lost unless the process exits cleanly. Use `cmLog` (stderr, unbuffered).
 - **Style** — comments explain *why*, especially the failure that motivated the code. Match

@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sid=$(jq -r '.session_id // empty' 2>/dev/null); curl -s --max-time 1 \"http://127.0.0.1:8765/start?sid=$sid\" > /dev/null || true"
+            "command": "p=$(cat); sid=$(printf '%s' \"$p\" | jq -r '.session_id // empty' 2>/dev/null); s=; case \"$p\" in *'\"prompt\":\"/claude-maxx'*|*'\"prompt\": \"/claude-maxx'*) s='&suppress=1';; esac; curl -s --max-time 1 \"http://127.0.0.1:8765/start?sid=$sid$s\" > /dev/null || true"
           }
         ]
       }

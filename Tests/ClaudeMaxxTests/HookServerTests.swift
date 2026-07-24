@@ -47,7 +47,7 @@ final class HookServerTests: XCTestCase {
         _ = router.route(HTTPRequestLine.parse("GET /stop?sid=a HTTP/1.1")!)
 
         let status = router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!)
-        XCTAssertEqual(status, "mode=ask active_sessions=1 window=hidden auto_advance=true")
+        XCTAssertEqual(status, "v\(Version.current) mode=ask active_sessions=1 window=hidden auto_advance=true")
     }
 
     /// Regression: macOS ships no `jq`, so on a stock machine the hooks send
@@ -63,14 +63,14 @@ final class HookServerTests: XCTestCase {
         _ = router.route(HTTPRequestLine.parse("GET /start?sid= HTTP/1.1")!)
         XCTAssertEqual(
             router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!),
-            "mode=ask active_sessions=2 window=hidden auto_advance=true",
+            "v\(Version.current) mode=ask active_sessions=2 window=hidden auto_advance=true",
             "two jq-less sessions are two sessions"
         )
 
         _ = router.route(HTTPRequestLine.parse("GET /stop?sid= HTTP/1.1")!)
         XCTAssertEqual(
             router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!),
-            "mode=ask active_sessions=1 window=hidden auto_advance=true",
+            "v\(Version.current) mode=ask active_sessions=1 window=hidden auto_advance=true",
             "one finishing must not close the window on the other"
         )
     }

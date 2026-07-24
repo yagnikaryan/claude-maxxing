@@ -16,17 +16,13 @@ private final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
 /// Routes the keyboard to `window` when a click lands in a text field.
 ///
 /// A `.nonactivatingPanel` in an `.accessory` app can become key *within the
-/// app* without the app ever becoming active — and macOS delivers keystrokes
-/// to the active app, not to a key window in an inactive one. So after the
-/// user clicks away to another app and back, typing kept going to whatever
-/// they left (reported as: TikTok's SMS code lands in Claude instead of the
-/// code box). Typing worked immediately after a login only because the app
-/// happened to still be active from the popup.
+/// app* without the app becoming active, and macOS delivers keystrokes to the
+/// active app — so after clicking away and back, typing landed in whatever the
+/// user left (TikTok's SMS code going to the terminal).
 ///
-/// Activating unconditionally on click would violate SPEC decision #7 by
-/// pulling focus off the user's editor whenever they unmute or scroll a
-/// video. Asking the page whether the click actually focused an editable
-/// element keeps the fix scoped to the one case that needs the keyboard.
+/// Activating on every click would violate SPEC decision #7 by stealing focus
+/// whenever they unmute or scroll. Asking the page whether the click actually
+/// focused an editable element scopes the fix to the case that needs it.
 func cmActivateIfEditingText(in webView: WKWebView, window: NSWindow) {
     let probe = """
     (function() {
@@ -308,32 +304,18 @@ final class FeedPanel: NSPanel, FeedPresenting {
         }
     }
 
-    /// Whether `performShow` should (re)load the channel's feed URL. Pure and
-    /// internal so it can be asserted directly, mirroring `WindowGeometry`.
+    /// Whether `performShow` should (re)load. Pure and internal so it can be
+    /// asserted directly, mirroring `WindowGeometry`.
     ///
-    /// Reload only when the channel actually changes, so pause→show on the
-    /// *same* channel resumes the live page instead of reloading it —
-    /// preserving scroll/feed position (SPEC §9.3's login/position framing).
+    /// Never compares `webView.url` to `channel.url`: in-site navigation makes
+    /// those differ while the channel is unchanged, and since `presentWindow`
+    /// fires on every prompt, that re-navigated users off half-finished login
+    /// forms (Instagram sessions "never saved"; TikTok's code screen vanished).
     ///
-    /// Deliberately keyed on channel *identity*, never on comparing
-    /// `webView.url` to `channel.url`. Any in-site navigation makes those two
-    /// differ while the channel is unchanged — most importantly a login flow,
-    /// where the user is legitimately parked on /accounts/login/ or a TikTok
-    /// SMS-code screen. Since `presentWindow` fires on every prompt, the URL
-    /// comparison this replaced re-navigated back to the feed mid-login on the
-    /// user's very next prompt, wiping the half-finished form. That is why
-    /// Instagram logins "never saved" (the session was never granted, because
-    /// the flow never got to finish) and why TikTok's 6-digit code screen kept
-    /// vanishing before a code could be entered.
-    ///
-    /// Keyed on `contentIdentity` rather than `id` so a channel that can
-    /// change what it shows without changing which channel it is — Reading,
-    /// picking a different article — actually reloads. Compared against the
-    /// identity captured *at load time*, not one re-derived from
-    /// `activeChannel`: channel instances are shared and live
-    /// (`ChannelRegistry.all` is a `static let`), so by the time a menu
-    /// selection reaches here the instance already reports its new identity
-    /// and comparing it to itself would never reload.
+    /// Uses `contentIdentity`, not `id`, so Reading reloads when the selected
+    /// article changes. Compared against the identity captured *at load time* —
+    /// channel instances are shared and live, so a re-derived value already
+    /// reports the new identity and would compare equal to itself.
     static func shouldLoad(loadedIdentity: String?, newIdentity: String, hasLoadedPage: Bool) -> Bool {
         loadedIdentity != newIdentity || !hasLoadedPage
     }

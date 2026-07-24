@@ -107,7 +107,10 @@ final class Router {
     }
 
     private func handleStart(_ request: HTTPRequestLine) -> String {
-        orchestrator.start(sid: Self.sessionID(from: request))
+        orchestrator.start(
+            sid: Self.sessionID(from: request),
+            suppress: request.query["suppress"] == "1"
+        )
     }
 
     private func handleStop(_ request: HTTPRequestLine) -> String {
@@ -214,7 +217,7 @@ final class Router {
         let window = orchestrator.isWindowPinned
             ? "visible-pinned"
             : (orchestrator.isWindowVisible ? "visible" : "hidden")
-        return "mode=\(settings.mode.rawValue) active_sessions=\(orchestrator.activeSessionCount) window=\(window) auto_advance=\(settings.autoAdvance)"
+        return "v\(Version.current) mode=\(settings.mode.rawValue) active_sessions=\(orchestrator.activeSessionCount) window=\(window) auto_advance=\(settings.autoAdvance)"
     }
 
     private func statsLine() -> String {
