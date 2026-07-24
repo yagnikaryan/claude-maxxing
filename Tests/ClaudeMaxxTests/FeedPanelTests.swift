@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import ClaudeMaxx
 
 /// The one place a real `FeedPanel` (and its WKWebView) is constructed in
@@ -48,6 +49,29 @@ final class FeedPanelTests: XCTestCase {
             FeedPanel.shouldLoad(previousChannelID: "reels", newChannelID: "reels", hasLoadedPage: true),
             "re-showing the same channel must leave an in-progress login page alone"
         )
+    }
+
+    /// Regression: popups used to be flattened into the main webview, which
+    /// severs `window.opener` — and Meta's `auth_platform` login handoff
+    /// posts the session back through exactly that, so sign-in could never
+    /// complete. A popup must be hosted in its own key-capable window built
+    /// from the *configuration WebKit supplies* (a fresh one would put it in
+    /// a different content world and lose the opener relationship again).
+    ///
+    /// `WKWebView` copies the configuration it is handed, so this asserts the
+    /// property that survives that copy and actually matters: the popup shares
+    /// the opener's data store, which is what lands the session cookie in the
+    /// same jar the feed reads from.
+    func testPopupSharesOpenerDataStoreAndCanHoldKey() {
+        let configuration = WKWebViewConfiguration()
+        let popup = PopupPanel(configuration: configuration, windowFeatures: WKWindowFeatures(), relativeTo: nil)
+
+        XCTAssertTrue(
+            popup.webView.configuration.websiteDataStore === configuration.websiteDataStore,
+            "the popup must write its session cookie into the opener's store"
+        )
+        XCTAssertTrue(popup.canBecomeKey, "login fields in the popup must be able to take a caret")
+        XCTAssertTrue(popup.styleMask.contains(.nonactivatingPanel), "the app itself must never activate")
     }
 
     /// The other half of the contract: identity-keyed reloading must still

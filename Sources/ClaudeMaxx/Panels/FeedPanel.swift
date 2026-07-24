@@ -86,6 +86,10 @@ final class FeedPanel: NSPanel, FeedPresenting {
     let webView: WKWebView
     private let dragHandle = DragHandleView(frame: .zero)
     private(set) var activeChannel: ContentChannel?
+    /// Live `window.open()` popups (logins, mostly). Retained here because
+    /// `isReleasedWhenClosed` is false and nothing else owns them; entries are
+    /// dropped in each popup's `onClose`.
+    private var popupPanels: [PopupPanel] = []
 
     init(settings: SettingsStore = .shared) {
         self.settings = settings
@@ -366,11 +370,15 @@ extension FeedPanel: WKNavigationDelegate {
     /// paired with `performShow`'s reload decisions, is what distinguishes
     /// "the site redirected us" from "we navigated ourselves".
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        cmLog("nav START -> \(webView.url?.absoluteString ?? "nil")")
+        cmLog("nav START\(webView === self.webView ? "" : " (popup)") -> \(webView.url?.absoluteString ?? "nil")")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        cmLog("nav FINISH -> \(webView.url?.absoluteString ?? "nil")")
+        cmLog("nav FINISH\(webView === self.webView ? "" : " (popup)") -> \(webView.url?.absoluteString ?? "nil")")
+        // Channel playback flags belong only to the feed. A popup is a login
+        // form with no video to pause, and `isVisible` describes this panel,
+        // not the popup's own window.
+        guard webView === self.webView else { return }
         // Re-applies the flags after every real navigation/reload, matching
         // §8.2 ("native toggles this flag"). __cmHidden must be re-asserted
         // here because a navigation that *completes after hide()* runs in a
@@ -388,18 +396,40 @@ extension FeedPanel: WKUIDelegate {
     /// a `target="_blank"` link or `window.open()` call — on macOS that
     /// falls through to the OS opening the URL in the user's *default*
     /// browser instead of the app's own contained webview (the real cause
-    /// behind "why did TikTok open in the browser"). Loading the request in
-    /// the same shared webview and returning `nil` (no second WKWebView
-    /// created) keeps everything inside the one panel SPEC §8.1 describes.
+    /// behind "why did TikTok open in the browser").
+    ///
+    /// This used to satisfy that by loading the request into the *same*
+    /// webview and returning nil. That kept popups in-app but silently broke
+    /// every popup-based login: see `PopupPanel` for why Meta's
+    /// `auth_platform` handoff can't survive losing its opener. Hosting a
+    /// real second webview keeps both properties — nothing escapes to the
+    /// default browser, and `window.opener`/`window.close()` still work.
     func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
+        cmLog("popup requested -> \(navigationAction.request.url?.absoluteString ?? "nil")")
+        let popup = PopupPanel(configuration: configuration, windowFeatures: windowFeatures, relativeTo: self)
+        popup.webView.uiDelegate = self
+        popup.webView.navigationDelegate = self
+        popupPanels.append(popup)
+        popup.onClose = { [weak self, weak popup] in
+            guard let popup else { return }
+            cmLog("popup closed -> \(popup.webView.url?.absoluteString ?? "nil")")
+            self?.popupPanels.removeAll { $0 === popup }
         }
-        return nil
+        popup.orderFrontRegardless()   // consistent with the feed panel: never activates the app
+        // Deliberately no `load` here — WebKit loads the request into the
+        // returned webview itself, and doing it manually would both
+        // double-load and break the opener handoff.
+        return popup.webView
+    }
+
+    /// `window.close()` from the popup's own script — the normal way an auth
+    /// handoff ends once it has posted the session back to its opener.
+    func webViewDidClose(_ webView: WKWebView) {
+        popupPanels.first { $0.webView === webView }?.close()
     }
 }
