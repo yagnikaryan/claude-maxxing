@@ -131,6 +131,11 @@ final class FeedPanel: NSPanel, FeedPresenting {
     let webView: WKWebView
     private let dragHandle = DragHandleView(frame: .zero)
     private(set) var activeChannel: ContentChannel?
+    /// `contentIdentity` of whatever was last actually loaded into the
+    /// webview — the left-hand side of `shouldLoad`. Stored rather than
+    /// re-derived because channel instances are shared and mutable; see
+    /// `shouldLoad`.
+    private var loadedContentIdentity: String?
     /// Live `window.open()` popups (logins, mostly). Retained here because
     /// `isReleasedWhenClosed` is false and nothing else owns them; entries are
     /// dropped in each popup's `onClose`. Internal (not private) so tests can
@@ -320,12 +325,20 @@ final class FeedPanel: NSPanel, FeedPresenting {
     /// Instagram logins "never saved" (the session was never granted, because
     /// the flow never got to finish) and why TikTok's 6-digit code screen kept
     /// vanishing before a code could be entered.
-    static func shouldLoad(previousChannelID: String?, newChannelID: String, hasLoadedPage: Bool) -> Bool {
-        previousChannelID != newChannelID || !hasLoadedPage
+    ///
+    /// Keyed on `contentIdentity` rather than `id` so a channel that can
+    /// change what it shows without changing which channel it is — Reading,
+    /// picking a different article — actually reloads. Compared against the
+    /// identity captured *at load time*, not one re-derived from
+    /// `activeChannel`: channel instances are shared and live
+    /// (`ChannelRegistry.all` is a `static let`), so by the time a menu
+    /// selection reaches here the instance already reports its new identity
+    /// and comparing it to itself would never reload.
+    static func shouldLoad(loadedIdentity: String?, newIdentity: String, hasLoadedPage: Bool) -> Bool {
+        loadedIdentity != newIdentity || !hasLoadedPage
     }
 
     private func performShow(channel: ContentChannel?) {
-        let previousChannelID = activeChannel?.id
         activeChannel = channel
         dragHandle.label.stringValue = channel?.displayName ?? "Claude Maxx"
 
@@ -335,16 +348,17 @@ final class FeedPanel: NSPanel, FeedPresenting {
         contentMinSize = WindowGeometry.minSize(aspectRatio: aspect)
 
         if let channel, Self.shouldLoad(
-            previousChannelID: previousChannelID,
-            newChannelID: channel.id,
+            loadedIdentity: loadedContentIdentity,
+            newIdentity: channel.contentIdentity,
             hasLoadedPage: webView.url != nil
         ) {
-            cmLog("performShow: LOADING \(channel.url.absoluteString) (prev=\(previousChannelID ?? "nil") new=\(channel.id) currentURL=\(webView.url?.absoluteString ?? "nil"))")
+            cmLog("performShow: LOADING \(channel.url.absoluteString) (loaded=\(loadedContentIdentity ?? "nil") new=\(channel.contentIdentity) currentURL=\(webView.url?.absoluteString ?? "nil"))")
             webView.configuration.userContentController.removeAllUserScripts()
             webView.configuration.userContentController.addUserScript(channel.userScript())
-            webView.load(URLRequest(url: channel.url))
+            channel.load(into: webView)
+            loadedContentIdentity = channel.contentIdentity
         } else {
-            cmLog("performShow: no reload (prev=\(previousChannelID ?? "nil") new=\(channel?.id ?? "nil") currentURL=\(webView.url?.absoluteString ?? "nil"))")
+            cmLog("performShow: no reload (loaded=\(loadedContentIdentity ?? "nil") new=\(channel?.contentIdentity ?? "nil") currentURL=\(webView.url?.absoluteString ?? "nil"))")
         }
 
         // Only place the window from scratch on a fresh open. If it's
@@ -466,7 +480,8 @@ extension FeedPanel: WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         cmLog("webview content process terminated — reloading \(activeChannel?.id ?? "no channel")")
         guard let channel = activeChannel else { return }
-        webView.load(URLRequest(url: channel.url))
+        channel.load(into: webView)
+        loadedContentIdentity = channel.contentIdentity
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

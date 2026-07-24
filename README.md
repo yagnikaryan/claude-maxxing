@@ -91,6 +91,25 @@ A pinned setup window blocks the normal per-prompt flow while it's up (no chip w
 prompt endings won't close it) — that's what `hide` is for. `/claude-maxx off` also closes it, but
 additionally turns the whole feature off, which is usually not what you want after setup.
 
+## The Reading channel
+
+Reading is your own list rather than someone's feed: web articles and local files (PDFs, mostly)
+held together and picked from **CM menu bar icon → Reading**. The submenu lists what you've added
+— **Add Link…** takes a pasted URL or a file path, **Add PDF…** opens a file picker. Choosing an
+entry switches to Reading and opens it; **Remove** drops the selected one. An empty list says so
+in the window instead of showing a blank page.
+
+Two things worth knowing:
+
+- **Scroll position is remembered for web pages, not PDFs.** A PDF rendered by WebKit isn't a DOM,
+  so the injected scroll-restore script never runs — PDFs reopen at the top. Web articles resume
+  where you left off, across hide/show and across relaunch.
+- **The list stores paths, not file handles.** Move or rename a file and the entry goes stale; the
+  window will tell you which one rather than going blank.
+
+There's deliberately no auto-advance here — reaching the end of a page isn't a request for a
+different one. You move between entries yourself.
+
 ## Config knobs
 
 All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
@@ -104,7 +123,9 @@ All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
 | `cm.dailyCapMinutes` | `0` (off) | daily content-time cap in minutes |
 | `cm.snapBack` | `true` | re-activate your previously-frontmost app on hide |
 | `cm.windowFrame` | unset until first hide | last dragged/resized window position |
-| `cm.scroll.<urlhash>` | `0.0` | per-article scroll offset (reading channel) |
+| `cm.reading.urls` | `[]` | reading list — web links and local file paths, in one list |
+| `cm.reading.currentIndex` | `0` | which reading-list entry is selected |
+| `cm.scroll.<urlhash>` | `0.0` | per-article scroll offset (reading channel, web pages only) |
 
 **Start with Claude Code:** the menu bar's toggle isn't a `cm.*` default either — it lives in
 `~/.claude/settings.json` as a `SessionStart` hook, so the setting is visible and editable in the
