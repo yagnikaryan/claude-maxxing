@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // across 20+ process starts it appeared in the log exactly zero
         // times — leaving no way to tell "the daemon restarted" from "the
         // daemon has been up all along".
-        cmLog("daemon starting — pid=\(getpid()) pgid=\(getpgrp()) build=\(Bundle.main.bundlePath)")
+        cmLog("daemon starting — v\(Version.current) pid=\(getpid()) pgid=\(getpgrp())")
         // No Dock icon / no App Switcher entry. This is the correct,
         // sufficient mechanism for an unbundled SwiftPM executable: there is
         // no `.app`/Info.plist yet for Launch Services to read `LSUIElement`
@@ -85,19 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Give the daemon its own session so a signal aimed at the process group
     /// that spawned it cannot take it down with them.
     ///
-    /// Every launcher starts it with `nohup "$bin" &`, which ignores SIGHUP
-    /// but does *not* create a new session — the daemon stays a member of the
-    /// spawning hook's process group even after being reparented to launchd.
-    /// A group-wide signal (how a parent CLI reaps its children, and how a
-    /// hook that exceeds its timeout is killed) therefore reaches the daemon
-    /// too, killing it mid-prompt with no crash report and, until now, no
-    /// record of any kind. That is the leading suspect for "the window
-    /// occasionally closes by itself".
+    /// Every launcher uses `nohup "$bin" &`, which ignores SIGHUP but does
+    /// *not* create a new session, so the daemon stayed in the spawning hook's
+    /// process group even after reparenting to launchd. A group-wide signal —
+    /// how a parent CLI reaps its children, and how a timed-out hook is killed
+    /// — reached it there, killing it mid-prompt with no crash report and no
+    /// record. Leading suspect for "the window closes by itself".
     ///
-    /// `setsid` fails with EPERM when the caller is already a process-group
-    /// leader — which happens when a shell with job control puts `&` in its
-    /// own group. That case needs no fix: being its own group leader already
-    /// isolates it from the parent's group.
+    /// EPERM means it is already a group leader (a shell with job control),
+    /// which is already isolated — nothing to fix.
     private func detachFromSpawningProcessGroup() {
         if setsid() == -1 {
             cmLog("setsid: already a process-group leader (errno \(errno)) — already isolated")

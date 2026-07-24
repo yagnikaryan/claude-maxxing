@@ -26,6 +26,11 @@ fail() { printf 'FAIL  %-22s %s\n' "$1" "${2-}"; failed=1; }
 fix()  { printf '      ↳ fix: %s\n' "$1"; }
 
 echo "Claude Maxx doctor — $repo"
+# Source identity beside the running daemon's own reported version (below):
+# together they say what the clone is at *and* what is actually running, which
+# is the pair you need in a bug report from someone else's machine.
+src_desc=$(git -C "$repo" describe --tags --always --dirty 2>/dev/null || echo "not a git clone")
+echo "source: $src_desc"
 echo
 
 # ---- toolchain -------------------------------------------------------------
@@ -149,6 +154,16 @@ if [ -f "$settings" ]; then
   else
     fail "hooks registered" "none found in $settings"
     fix "./scripts/install.sh"
+  fi
+
+  # Hooks are written into settings.json at install time, so a clone that has
+  # been pulled since does not get hook changes until install.sh re-runs. That
+  # is invisible otherwise: everything works, just without the newer behavior.
+  if grep -q 'suppress=1' "$settings" 2>/dev/null; then
+    pass "hooks up to date" "command turns will not open a window"
+  else
+    warn "hooks up to date" "older UserPromptSubmit hook — /claude-maxx turns can flash content"
+    fix "./scripts/install.sh   (rewrites the hooks, then restart Claude Code)"
   fi
 
   # The fifth is deliberately optional: it is the menu bar's "Start with
