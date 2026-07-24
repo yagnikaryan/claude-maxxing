@@ -149,6 +149,7 @@ final class Menu: NSObject, NSMenuDelegate {
 
     @objc private func selectChannel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        cmLog("menu: channel selected \(id)")
         settings.channel = id
         // If the window is already open (e.g. a setup/login session), make
         // the switch live instead of only taking effect on the next show —

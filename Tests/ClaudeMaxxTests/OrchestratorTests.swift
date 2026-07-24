@@ -9,6 +9,7 @@ import XCTest
 final class SpyFeedPresenter: FeedPresenting {
     private(set) var shownChannelIDs: [String?] = []
     private(set) var hideCount = 0
+    private(set) var pauseCount = 0
 
     func show(channel: ContentChannel?) {
         shownChannelIDs.append(channel?.id)
@@ -18,7 +19,7 @@ final class SpyFeedPresenter: FeedPresenting {
         hideCount += 1
     }
 
-    func pause() {}
+    func pause() { pauseCount += 1 }
     func attention() {}
 }
 
@@ -94,13 +95,18 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(spy.shownChannelIDs.isEmpty)
     }
 
-    /// Channel switching while ALERTING (window up, paused, awaiting
-    /// attention) must stay a no-op, same as idle — re-presenting fresh
-    /// content there would leave `state` at `.alerting` while the new
-    /// channel is actually unpaused, and a genuinely new `/attention` would
-    /// then no-op against it (`handleAttention`'s `state == .showing` guard).
-    /// Scoping the live-switch fix to SHOWING only avoids that regression.
-    func testRefreshIfShowingIsNoOpWhileAlerting() {
+    /// Channel switching while ALERTING (window up, paused after a
+    /// notification) must re-point the window, not silently do nothing.
+    /// This previously no-op'd, which read as "changing the platform in the
+    /// menu doesn't change the window" — `/attention` fires on every Claude
+    /// Code notification, so ALERTING is a common state to be picking a
+    /// channel from.
+    ///
+    /// The no-op existed to avoid leaving `state` at `.alerting` while fresh
+    /// unpaused content played, which would make the next `/attention`
+    /// no-op against it. Resolving the alert on re-point is what makes the
+    /// switch safe, so both halves are asserted here.
+    func testRefreshWhileAlertingRepointsAndResolvesTheAlert() {
         let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         settings.channel = "shorts"
         let spy = SpyFeedPresenter()
@@ -109,13 +115,20 @@ final class OrchestratorTests: XCTestCase {
         orchestrator.showNow(openedBy: .menu)
         drainMainQueue()
         _ = orchestrator.attention()
-        XCTAssertEqual(spy.shownChannelIDs, ["shorts"]) // sanity: now alerting, not re-shown
+        XCTAssertEqual(spy.shownChannelIDs, ["shorts"]) // sanity: now alerting
 
         settings.channel = "xfeed"
         orchestrator.refreshIfShowing()
         drainMainQueue()
+        XCTAssertEqual(spy.shownChannelIDs, ["shorts", "xfeed"], "the open window must follow the menu")
 
-        XCTAssertEqual(spy.shownChannelIDs, ["shorts"]) // unchanged — no-op while alerting
+        // The alert must be resolved, or this attention would no-op and the
+        // newly-playing channel would keep going with audio after a
+        // notification — the exact regression the old no-op protected.
+        let pausesBefore = spy.pauseCount
+        _ = orchestrator.attention()
+        drainMainQueue()
+        XCTAssertEqual(spy.pauseCount, pausesBefore + 1, "a notification must still pause the switched-to channel")
     }
 
     /// `showNow` (the setup/debug entry point, §8.1/§14) must work with zero

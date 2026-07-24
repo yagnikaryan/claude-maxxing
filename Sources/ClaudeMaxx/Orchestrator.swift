@@ -464,9 +464,35 @@ final class Orchestrator {
         }
     }
 
+    /// ALERTING re-points too, and resolves the alert while doing it.
+    ///
+    /// The window is on screen in both states — `.alerting` only means a
+    /// Notification arrived and playback was paused — and `.alerting`
+    /// persists until the user interacts. Gating on `.showing` alone made
+    /// the menu's channel picker silently do nothing whenever a notification
+    /// had landed first, which is common (`/attention` fires on every Claude
+    /// Code notification). The setting still persisted, so the switch looked
+    /// like it worked until the next window open — exactly how it was
+    /// reported: "it's not changing the window".
+    ///
+    /// Widening the guard alone would reintroduce the regression the old
+    /// SHOWING-only scope was protecting against: fresh content plays
+    /// unpaused while `state` still reads `.alerting`, so the next
+    /// `/attention` no-ops against it (`handleAttention` only transitions
+    /// from `.showing`) and never pauses. Choosing a channel from the menu
+    /// *is* user interaction, so clear the alert as `handleUserInteraction`
+    /// would — the state then matches what is actually on screen.
     private func handleRefreshIfShowing() {
-        guard state == .showing else { return }
-        presentWindow()
+        cmLog("refreshIfShowing: state=\(state) channel=\(settings.channel)")
+        switch state {
+        case .showing:
+            presentWindow()
+        case .alerting:
+            state = .showing
+            presentWindow()
+        case .idle, .pending, .offering:
+            break
+        }
     }
 
     private func handleSuppressCurrentWait() {
