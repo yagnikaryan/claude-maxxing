@@ -27,10 +27,19 @@ one-time steps below and aren't in this repo yet — for now, do them by hand:
 1. Merge [`hooks-settings.json`](./hooks-settings.json) into `~/.claude/settings.json` (or run
    `/hooks` inside Claude Code afterward to confirm the four entries registered).
 2. Copy [`claude-config/commands/claude-maxx.md`](./claude-config/commands/claude-maxx.md) to
-   `~/.claude/commands/claude-maxx.md`.
+   `~/.claude/commands/claude-maxx.md`, then **edit the two absolute paths inside it** to point at
+   your clone. The command runs [`scripts/claude-maxx-cmd.sh`](./scripts/claude-maxx-cmd.sh) rather
+   than a bare `curl`, and pre-approves exactly that path in `allowed-tools` so it never prompts
+   for permission. (Both paths are hardcoded until `install.sh` lands — there's no reliable way for
+   a slash command to locate the repo on its own.)
 
-Signed, notarized `.app` packaging and a Homebrew cask are also M3 — until then, `swift run` (or a
-locally built `.build/*/ClaudeMaxx` binary) is how you run the daemon.
+You don't need to start the daemon by hand: if `/claude-maxx` finds nothing listening on
+`127.0.0.1:8765`, the wrapper launches `.build/debug/ClaudeMaxx`, waits for it, and re-sends your
+subcommand — so the first `/claude-maxx status` of the day both starts the daemon and answers.
+It only reports `daemon not running` if no built binary exists, which `swift build` fixes.
+
+Signed, notarized `.app` packaging and a Homebrew cask are also M3 — until then, `swift build` (or
+`swift run` to watch it in the foreground) is how you get that binary.
 
 ## `/claude-maxx` command
 
@@ -45,7 +54,7 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx setup` | open window immediately, for first-run login | numbered setup walkthrough (see below) |
 | `/claude-maxx hide` (or `done`) | close the window, keep the current mode | `window hidden — mode stays ask` |
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance (applies live if the window is open) | `auto-advance on/off` |
-| `/claude-maxx stats` | none | today's aggregate line |
+| `/claude-maxx stats` | none | today's aggregate line (waits, content/waiting minutes, chip opt-in, videos completed) |
 | `/claude-maxx status` (or bare) | none | one-line state dump (`window=visible-pinned` = a setup/now window that ignores prompt endings) |
 
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
@@ -110,7 +119,13 @@ LAYER 2 · ORCHESTRATOR (this daemon)
                     │  ContentChannel protocol
 LAYER 3 · CONTENT (channel adapters over one shared WKWebView)
   ShortsChannel · XFeedChannel · ReadingChannel · ReelsChannel · TikTokChannel
+                    │  Reels + TikTok share ScrollFeedScript
+  injected JS → `cm` message bridge → advance / advance-failed / idle
 ```
+
+Channel scripts report back over a `cm` `WKScriptMessageHandler`: a confirmed advance becomes a
+`.advance` stats event (what `videos_completed` counts), and a stuck channel reports why instead of
+failing silently.
 
 Hooks are the *signal wire* — they fire on every prompt unconditionally and report lifecycle only
 (`sid`, nothing else). `/claude-maxx` is the *intent wire* — it's how you tell the daemon what to
@@ -140,19 +155,28 @@ mid-prompt keeps it open, correctly. (3) An interrupted turn (Esc) never fires t
 that session stays counted until its next completed turn, its exit (`SessionEnd` hook), or the
 30-minute watchdog. And remember `mode=off` means no window ever opens in the first place.
 
-**Reels/TikTok don't auto-advance to the next video when one ends — they just scroll.** Known,
-intentional for now. Per SPEC §8.2, the real "next video" chevron selectors on those two platforms
-have to be pinned from live DOM inspection, not guessed — Reels also needs an actual account login
-to test meaningfully. Rather than ship a guessed selector, both channels currently use the spec's
-own documented scroll fallback as their *only* advance mechanism. Everything else (jitter, `ended`
-detection, stats reporting) is already wired, so swapping in a real chevron click later is a
-one-line change once someone pins the live selector.
+**Reels/TikTok don't auto-advance.** They should — verified against both live feeds. Advancing is
+still scroll-based rather than a "next" chevron click (per SPEC §8.2 those selectors must be
+pinned from live DOM inspection, not guessed), but the scroll now targets the feed's *own*
+scrolling container. Scrolling `window` moved nothing on either site, and the success check
+compared `querySelector('video')` — the first video in a virtualized feed, not the one on screen —
+so advances silently reported failure forever. Both channels share
+[`ScrollFeedScript`](./Sources/ClaudeMaxx/Channels/ScrollFeedScript.swift) so a fix can't reach one
+and miss the other.
 
-**Can I type into the window? Clicking a login form does nothing.** Click directly into the page
-first — the panel takes keyboard focus only when you click it (it never grabs focus just by
-appearing, so it can't hijack your typing mid-prompt). Once clicked, type normally; clicking back
-into your terminal returns keystrokes there. If this is broken you're on a build older than the
-`canBecomeKey` fix — rebuild and restart the daemon.
+If a channel really is stuck, it now says so: it emits an idle heartbeat naming what it sees
+(`no video (0 in DOM)`, `current paused t=0.0/180.0`) to `~/Library/Logs/ClaudeMaxx.log`, and each
+advance records which mechanism worked (`advance via container DIV#column-list-container`). A
+channel that goes quiet in that log is advancing normally.
+
+**Can I type into the window? My keystrokes go to my editor instead.** Click directly into the
+field. The panel never grabs focus just by appearing, so it can't hijack your typing mid-prompt —
+but it also can't receive keystrokes until you deliberately click it. Because this is a
+non-activating panel in an accessory (no Dock icon) app, clicking alone used to make it key
+*within the app* without making the app active, and macOS delivers keystrokes to the active app —
+so after clicking away and back, typing landed in whatever you left (an SMS code going to your
+terminal instead of the code box). Clicking a text field now activates the app; clicking a video
+deliberately does not, so watching never steals focus from your editor.
 
 **A platform (YouTube/X) asks me to verify it's me the first time.** Expected, one-time friction —
 the embedded webview looks unfamiliar to the platform, so it may ask for an email code or "was
@@ -160,12 +184,28 @@ this you?" confirmation. Click **"Show Window Now"** in the menu bar (or run `/c
 to open the window on demand, pick each channel from the menu to sign into it in turn — cookies
 persist in the app's own data store after that.
 
-**I logged in (even did the captcha) but I'm logged out again right away.** If you're on a build
-older than the user-agent fix, that's why: WKWebView's default UA lacks Safari's `Version/x
-Safari/x` suffix, and Instagram/Meta treat that fingerprint as an untrusted embedded browser —
-they accept your password, show the captcha, then silently never issue the session cookie. The
-window now presents the full Safari UA, so log in once more and it sticks (cookies live in
-`~/Library/HTTPStorages/ClaudeMaxx.binarycookies` and survive restarts).
+**I logged in (even did the captcha) but I'm logged out again right away.** Three separate causes
+were behind this, all fixed — if you're on an older build, rebuild before debugging further.
+
+WKWebView's default UA lacks Safari's `Version/x Safari/x` suffix, which Meta treats as an
+untrusted embedded browser. More subtly, the window used to reload the feed whenever the current
+URL differed from the channel's — true of *every* in-site page, including a login form — and that
+check ran on every prompt, so your next message to Claude navigated away from a half-finished
+login. A login that never completes never gets a session, which reads exactly like "it didn't
+save". Finally, `window.open()` popups were flattened into the main webview, severing
+`window.opener`; Meta's `auth_platform` handoff posts the session back through it, so popups now
+open in their own window ([`PopupPanel`](./Sources/ClaudeMaxx/Panels/PopupPanel.swift)).
+
+Once you're in, it stays: cookies live in the app's persistent data store
+(`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`) and survive relaunches. To confirm a real
+session rather than a partial login, look for a `sessionid` cookie — `csrftoken` alone means the
+flow never finished. Note that WebKit keys storage by *process name* for an unbundled binary, so
+M3's packaged `.app` will change that path and cost you one final re-login.
+
+**Instagram's captcha route still fails for me.** Known, unfixed. The `auth_platform/recaptcha`
+path can bounce back to `/?e=<code>` without issuing a session; the verification-**code** route
+completes normally. If you get routed to a captcha and it fails, retry — Instagram usually offers
+the code path instead.
 
 **Does this send my prompts anywhere?** No. The daemon binds `127.0.0.1` exclusively (never
 `0.0.0.0`) and never receives prompt text, transcript contents, or your working directory — hooks
@@ -197,6 +237,16 @@ swift build
 swift test
 swift run
 ```
+
+**Logs.** The daemon runs headless behind a menu bar icon, so it writes a trace to
+`~/Library/Logs/ClaudeMaxx.log` (the wrapper script points its stdout/stderr there): every
+navigation, every reload decision and why, and each channel's advance / advance-failed / idle
+heartbeat. `tail -f ~/Library/Logs/ClaudeMaxx.log` is the fastest way to see what a channel is
+actually doing — most of the login and auto-advance bugs above were only diagnosable from it.
+
+**Inspecting a page.** The feed webview is `isInspectable`, so Safari can attach to it: enable
+Safari → Settings → Advanced → "Show features for web developers", then Safari → Develop →
+**ClaudeMaxx** → the page. There is no right-click "Inspect Element" inside the window itself.
 
 See `SPEC.md` for the full technical architecture, state machine, and build plan. This repo is
 mid-way through the plan's **M2 → M3** milestones (channels/chip picker done; daily cap and
