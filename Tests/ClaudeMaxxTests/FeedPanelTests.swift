@@ -35,4 +35,31 @@ final class FeedPanelTests: XCTestCase {
         XCTAssertEqual(panel.webView.configuration.applicationNameForUserAgent, "Version/18.5 Safari/605.1.15")
         XCTAssertTrue(panel.webView.configuration.websiteDataStore.isPersistent)
     }
+
+    /// Regression: `performShow` used to reload whenever `webView.url`
+    /// differed from `channel.url`, which is true for every in-site page —
+    /// including a login form. `presentWindow` runs on every prompt, so the
+    /// user's next message navigated the webview off a half-finished
+    /// Instagram login (or TikTok SMS-code screen) back to the feed, and the
+    /// sign-in could never complete. Same channel + a page already loaded
+    /// must never reload, wherever in the site the user has navigated.
+    func testDoesNotReloadWhileUserIsMidLoginOnTheSameChannel() {
+        XCTAssertFalse(
+            FeedPanel.shouldLoad(previousChannelID: "reels", newChannelID: "reels", hasLoadedPage: true),
+            "re-showing the same channel must leave an in-progress login page alone"
+        )
+    }
+
+    /// The other half of the contract: identity-keyed reloading must still
+    /// load on a real channel switch and on the first show of a session.
+    func testLoadsOnChannelSwitchAndFirstShow() {
+        XCTAssertTrue(
+            FeedPanel.shouldLoad(previousChannelID: "reels", newChannelID: "tiktok", hasLoadedPage: true),
+            "switching channels must load the new channel's feed"
+        )
+        XCTAssertTrue(
+            FeedPanel.shouldLoad(previousChannelID: nil, newChannelID: "reels", hasLoadedPage: false),
+            "first show of a session has nothing loaded yet"
+        )
+    }
 }

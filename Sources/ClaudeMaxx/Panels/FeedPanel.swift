@@ -99,6 +99,14 @@ final class FeedPanel: NSPanel, FeedPresenting {
         // WebKit UA, composing exactly what real Safari sends.
         configuration.applicationNameForUserAgent = "Version/18.5 Safari/605.1.15"
         self.webView = WKWebView(frame: .zero, configuration: configuration)
+        // Right-click → Inspect Element. Login flows fail in ways only the
+        // inspector can explain (e.g. Instagram completes password+captcha
+        // but the login XHR response withholds `sessionid`; TikTok's SMS
+        // code boxes won't take focus) — and the inspector is loopback-only
+        // developer tooling, so leaving it on costs nothing in production.
+        if #available(macOS 13.3, *) {
+            self.webView.isInspectable = true
+        }
 
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.defaultDesiredSize),
@@ -197,7 +205,29 @@ final class FeedPanel: NSPanel, FeedPresenting {
         }
     }
 
+    /// Whether `performShow` should (re)load the channel's feed URL. Pure and
+    /// internal so it can be asserted directly, mirroring `WindowGeometry`.
+    ///
+    /// Reload only when the channel actually changes, so pause→show on the
+    /// *same* channel resumes the live page instead of reloading it —
+    /// preserving scroll/feed position (SPEC §9.3's login/position framing).
+    ///
+    /// Deliberately keyed on channel *identity*, never on comparing
+    /// `webView.url` to `channel.url`. Any in-site navigation makes those two
+    /// differ while the channel is unchanged — most importantly a login flow,
+    /// where the user is legitimately parked on /accounts/login/ or a TikTok
+    /// SMS-code screen. Since `presentWindow` fires on every prompt, the URL
+    /// comparison this replaced re-navigated back to the feed mid-login on the
+    /// user's very next prompt, wiping the half-finished form. That is why
+    /// Instagram logins "never saved" (the session was never granted, because
+    /// the flow never got to finish) and why TikTok's 6-digit code screen kept
+    /// vanishing before a code could be entered.
+    static func shouldLoad(previousChannelID: String?, newChannelID: String, hasLoadedPage: Bool) -> Bool {
+        previousChannelID != newChannelID || !hasLoadedPage
+    }
+
     private func performShow(channel: ContentChannel?) {
+        let previousChannelID = activeChannel?.id
         activeChannel = channel
         dragHandle.label.stringValue = channel?.displayName ?? "Claude Maxx"
 
@@ -206,10 +236,11 @@ final class FeedPanel: NSPanel, FeedPresenting {
         // floor — just not a live contentAspectRatio lock (see configure()).
         contentMinSize = WindowGeometry.minSize(aspectRatio: aspect)
 
-        // Reload only when switching channels/URLs, so pause→show on the
-        // *same* channel resumes the live page instead of reloading it —
-        // preserves scroll/feed position (SPEC §9.3's login/position framing).
-        if let channel, webView.url != channel.url {
+        if let channel, Self.shouldLoad(
+            previousChannelID: previousChannelID,
+            newChannelID: channel.id,
+            hasLoadedPage: webView.url != nil
+        ) {
             webView.configuration.userContentController.removeAllUserScripts()
             webView.configuration.userContentController.addUserScript(channel.userScript())
             webView.load(URLRequest(url: channel.url))
