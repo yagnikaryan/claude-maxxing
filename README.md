@@ -72,7 +72,7 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance on the video channels (applies live if the window is open; X/Reading have no auto behavior) | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line (waits, content/waiting minutes, chip opt-in, videos completed) |
 | `/claude-maxx dashboard` | open the stats dashboard in its own native floating panel | `opening stats dashboard` |
-| `/claude-maxx status` (or bare) | none | one-line state dump (`window=visible-pinned` = a setup/now window that ignores prompt endings) |
+| `/claude-maxx status` (or bare) | none | one-line state dump, prefixed with the running version (`window=visible-pinned` = a setup/now window that ignores prompt endings) |
 
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
 §4.3). Running the command is itself a prompt, so its own `/start`→`/stop` fire too — every
@@ -213,6 +213,10 @@ logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/Cla
 (`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`).
 
 ## FAQ
+
+**I pulled a new version and something behaves the same as before.** Hooks are written into
+`settings.json` at install time, so pulling doesn't update them — re-run `./scripts/install.sh` and
+restart Claude Code. `doctor.sh` flags this as `hooks up to date`.
 
 **Something's wrong and I don't know what.** Run [`./scripts/doctor.sh`](./scripts/doctor.sh). It
 checks the toolchain, the build, whether the running daemon is actually *this* clone's binary and

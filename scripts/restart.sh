@@ -1,43 +1,24 @@
-#!/bin/bash
+#!/bin/sh
 # Stop whatever Claude Maxx is running and start this clone's binary.
 #
-# Exists because the daemon is long-lived and a rebuild does not touch the
-# running process: after editing Sources/, the old binary keeps running and
-# every symptom you observe belongs to the old code. That failure is
-# indistinguishable from a broken feature — a channel that "still shows a blank
-# page" after the fix landed is the canonical case.
+# The daemon is long-lived and a rebuild does not touch the running process, so
+# after editing Sources/ every symptom you observe belongs to the old code — a
+# fix that "didn't work" is usually a stale daemon.
 #
-# Does NOT build. Chain it when you have changed code:
-#   swift build -c release && ./scripts/restart.sh
-set -uo pipefail
+# Does NOT build. Chain it: swift build -c release && ./scripts/restart.sh
+. "$(dirname "$0")/lib.sh"
 
-repo=$(cd "$(dirname "$0")/.." && pwd)
-bin="$repo/.build/release/ClaudeMaxx"
-[ -x "$bin" ] || bin="$repo/.build/debug/ClaudeMaxx"
-[ -x "$bin" ] || {
-  echo "no binary in $repo/.build — run: swift build -c release" >&2
-  exit 1
-}
-
-log="$HOME/Library/Logs/ClaudeMaxx.log"
-mkdir -p "$(dirname "$log")"
+bin=$(cm_bin "$(cm_repo "$0")")
+[ -n "$bin" ] || { echo "nothing built — run: swift build -c release" >&2; exit 1; }
 
 pkill -f '\.build/(debug|release)/ClaudeMaxx' 2>/dev/null && echo "stopped the running daemon"
-# Give the old process time to release port 8765 — starting immediately makes
-# the new one fail its bind and sit there useless with the menu bar icon up.
+# Wait for the old process to release port 8765; starting immediately leaves the
+# new one unable to bind, sitting there useless with its menu bar icon up.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  curl -sG --max-time 1 --data-urlencode "arg=status" "http://127.0.0.1:8765/cmd" >/dev/null 2>&1 || break
-  sleep 0.3
+    [ -z "$(cm_send status)" ] && break
+    sleep 0.3
 done
 
-nohup "$bin" >>"$log" 2>&1 &
+cm_launch "$bin"
 echo "started $bin"
-
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 0.3
-  out=$(curl -sG --max-time 1 --data-urlencode "arg=status" "http://127.0.0.1:8765/cmd" 2>/dev/null)
-  [ -n "$out" ] && { echo "$out"; exit 0; }
-done
-
-echo "started, but not responding on 8765 yet — see $log" >&2
-exit 1
+cm_await status || { echo "started, but not responding on 8765 — see $(cm_log_path)" >&2; exit 1; }
