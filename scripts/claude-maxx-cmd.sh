@@ -7,7 +7,9 @@ out=$(curl -sG --max-time 1 --data-urlencode "arg=$*" "$url") && { printf '%s\n'
 
 bin="$HOME/Documents/Code/claude-maxxing/.build/debug/ClaudeMaxx"
 [ -x "$bin" ] || { echo "daemon not running and no binary at $bin — run swift build first"; exit 0; }
-nohup "$bin" >/dev/null 2>&1 &
+log="$HOME/Library/Logs/ClaudeMaxx.log"
+mkdir -p "$(dirname "$log")"
+nohup "$bin" >>"$log" 2>&1 &
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.3
   out=$(curl -sG --max-time 1 --data-urlencode "arg=$*" "$url") && { printf 'daemon started\n%s\n' "$out"; exit 0; }

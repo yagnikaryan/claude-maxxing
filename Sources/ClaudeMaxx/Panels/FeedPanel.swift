@@ -1,6 +1,15 @@
 import AppKit
 import WebKit
 
+/// Timestamped stderr trace. The daemon runs headless behind a menu bar icon,
+/// so stderr (redirected to a log file by the launcher) is the only place
+/// window/navigation behavior can be reconstructed after the fact — a login
+/// flow that breaks only on a later prompt can't be caught by watching.
+func cmLog(_ message: String) {
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    FileHandle.standardError.write("[\(stamp)] \(message)\n".data(using: .utf8)!)
+}
+
 /// A thin overlay strip so the otherwise-undraggable panel can be moved.
 /// `isMovableByWindowBackground` has no effect here: the `WKWebView` fills
 /// the entire content view, so nothing is left as true "window background"
@@ -241,9 +250,12 @@ final class FeedPanel: NSPanel, FeedPresenting {
             newChannelID: channel.id,
             hasLoadedPage: webView.url != nil
         ) {
+            cmLog("performShow: LOADING \(channel.url.absoluteString) (prev=\(previousChannelID ?? "nil") new=\(channel.id) currentURL=\(webView.url?.absoluteString ?? "nil"))")
             webView.configuration.userContentController.removeAllUserScripts()
             webView.configuration.userContentController.addUserScript(channel.userScript())
             webView.load(URLRequest(url: channel.url))
+        } else {
+            cmLog("performShow: no reload (prev=\(previousChannelID ?? "nil") new=\(channel?.id ?? "nil") currentURL=\(webView.url?.absoluteString ?? "nil"))")
         }
 
         // Only place the window from scratch on a fresh open. If it's
@@ -350,7 +362,15 @@ final class FeedPanel: NSPanel, FeedPresenting {
 // MARK: - WKNavigationDelegate
 
 extension FeedPanel: WKNavigationDelegate {
+    /// Diagnostic trail for login flows: every page the webview commits to,
+    /// paired with `performShow`'s reload decisions, is what distinguishes
+    /// "the site redirected us" from "we navigated ourselves".
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        cmLog("nav START -> \(webView.url?.absoluteString ?? "nil")")
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        cmLog("nav FINISH -> \(webView.url?.absoluteString ?? "nil")")
         // Re-applies the flags after every real navigation/reload, matching
         // §8.2 ("native toggles this flag"). __cmHidden must be re-asserted
         // here because a navigation that *completes after hide()* runs in a
