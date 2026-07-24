@@ -18,10 +18,17 @@ refocuses, all without touching the mouse again.
 ```bash
 git clone https://github.com/yagnikaryan/claude-maxxing && cd claude-maxxing
 ./scripts/install.sh
+./scripts/doctor.sh     # verify — exits 0 when healthy
 ```
 
 Then restart Claude Code (or run `/hooks`) so it picks up the new hooks, and run
 `/claude-maxx setup` to sign into the platforms you want. That's the whole install.
+
+**Or let Claude do it.** Open Claude Code in the clone and say *"set this up"* — the repo ships
+a `setup-claude-maxx` skill and a `CLAUDE.md`, so your agent knows the install, the verify step,
+and the parts only you can do (platform logins, picking a mode). `./scripts/doctor.sh` is
+written to be read by an agent: one `STATUS  check  detail` line per check, a `↳ fix:` line
+under anything wrong, and an exit code — so "did it work?" is checkable rather than guessed.
 
 `install.sh` builds the release binary, writes `~/.claude/commands/claude-maxx.md` with the paths
 pointing at *your* clone, merges this project's five hook entries into `~/.claude/settings.json`,
@@ -206,6 +213,17 @@ logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/Cla
 (`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`).
 
 ## FAQ
+
+**Something's wrong and I don't know what.** Run [`./scripts/doctor.sh`](./scripts/doctor.sh). It
+checks the toolchain, the build, whether the running daemon is actually *this* clone's binary and
+newer than your sources, the loopback port, the slash command, and the hook entries — printing a
+`↳ fix:` line under anything wrong and exiting non-zero if the daemon can't work as-is. It's
+read-only, so it's always safe to run.
+
+**I changed the code and nothing changed.** The daemon is long-lived and a rebuild doesn't touch
+the running process, so you're watching the old binary. `swift build -c release &&
+./scripts/restart.sh`. This is the single most convincing false negative in the project — a fix
+that "didn't work" is usually a stale daemon, which is why `doctor.sh` checks binary freshness.
 
 **Two Claude Code sessions and the window closes while one is still working.** Fixed, but worth
 knowing why: the hooks read `session_id` with `jq`, which macOS doesn't ship. Without it every
