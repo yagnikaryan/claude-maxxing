@@ -162,8 +162,8 @@ final class Orchestrator {
 
     // MARK: Public API
 
-    func start(sid: String?) -> String {
-        queue.sync { handleStart(sid: sid) }
+    func start(sid: String? = nil, suppress: Bool = false) -> String {
+        queue.sync { handleStart(sid: sid, suppress: suppress) }
     }
 
     func stop(sid: String?) -> String {
@@ -264,7 +264,21 @@ final class Orchestrator {
         NotificationCenter.default.post(name: .claudeMaxxDidBecomeIdle, object: nil)
     }
 
-    private func handleStart(sid: String?) -> String {
+    /// `suppress` marks a turn that must never present content — set by the
+    /// `UserPromptSubmit` hook when the prompt is itself a `/claude-maxx`
+    /// command.
+    ///
+    /// The old `suppressCurrentWait()` path could not do this. It runs when
+    /// the `/cmd` request *arrives*, and a slash command's shell body can take
+    /// far longer than `showDelay` to execute — measured at 17 s against a 4 s
+    /// debounce. So `/claude-maxx off` armed the debounce at submit, opened
+    /// the window 4 s later, played content for 12 s, and only then applied
+    /// the command that closed it: the window the command existed to shut
+    /// off. Deciding at submit time is the only point early enough.
+    ///
+    /// Confined to the 0→1 transition so a command typed in one session
+    /// cannot cancel a window another session's prompt legitimately owns.
+    private func handleStart(sid: String?, suppress: Bool = false) -> String {
         let t = now()
         let becameActive = tracker.start(sid: sid, now: t)
         // Session accounting decides whether the window is up, but left no
@@ -273,23 +287,17 @@ final class Orchestrator {
         // the resulting count: a close is legitimate only when the count
         // genuinely reached 0, and this is the only way to tell that from a
         // miscounted session.
-        cmLog("session start sid=\(sid ?? "<anon>") active=\(tracker.activeCount)\(becameActive ? " (0→1)" : "")")
+        cmLog("session start sid=\(sid ?? "<anon>") active=\(tracker.activeCount)\(becameActive ? " (0→1)" : "")\(suppress ? " suppressed" : "")")
         if becameActive {
             waitStartedAt = t
-            skippedThisWait = false
-            // Guard on `state == .idle`: a 0→1 transition can happen while
-            // state is already SHOWING/ALERTING if the window was opened
-            // manually (Show Window Now / /claude-maxx now/setup) before this
-            // prompt started. Unconditionally calling enterPending() used to
-            // clobber that back to .pending — the window stayed visibly open
-            // on screen, but the state machine "forgot" it was in a content
-            // episode. When the prompt's Stop later drove the count back to
-            // 0, handleWaitEnded saw .pending/.offering (whatever the
-            // clobbered debounce cycle landed on) instead of .showing, so it
-            // took the chip-dismiss cleanup path and never called
-            // hideWindowAction() — the window would silently stay open
-            // forever. Only enter PENDING from a genuine idle start.
-            if settings.mode != .off && state == .idle {
+            skippedThisWait = suppress
+            // Only from a genuine idle start: a 0→1 transition can arrive
+            // while a manually-opened window is already showing, and
+            // clobbering that to .pending made the state machine forget it was
+            // in a content episode — the eventual /stop then took the
+            // chip-dismiss path, never called hideWindowAction(), and the
+            // window stayed open forever.
+            if settings.mode != .off && state == .idle && !suppress {
                 enterPending(at: t)
             }
         }
@@ -497,22 +505,13 @@ final class Orchestrator {
 
     /// ALERTING re-points too, and resolves the alert while doing it.
     ///
-    /// The window is on screen in both states — `.alerting` only means a
-    /// Notification arrived and playback was paused — and `.alerting`
-    /// persists until the user interacts. Gating on `.showing` alone made
-    /// the menu's channel picker silently do nothing whenever a notification
-    /// had landed first, which is common (`/attention` fires on every Claude
-    /// Code notification). The setting still persisted, so the switch looked
-    /// like it worked until the next window open — exactly how it was
-    /// reported: "it's not changing the window".
-    ///
-    /// Widening the guard alone would reintroduce the regression the old
-    /// SHOWING-only scope was protecting against: fresh content plays
-    /// unpaused while `state` still reads `.alerting`, so the next
-    /// `/attention` no-ops against it (`handleAttention` only transitions
-    /// from `.showing`) and never pauses. Choosing a channel from the menu
-    /// *is* user interaction, so clear the alert as `handleUserInteraction`
-    /// would — the state then matches what is actually on screen.
+    /// The window is on screen in both states, so gating on `.showing` alone
+    /// made the menu's channel picker silently do nothing whenever a
+    /// notification had landed first — reported as "it's not changing the
+    /// window". But widening the guard without clearing the alert would leave
+    /// fresh content playing while `state` still read `.alerting`, so the next
+    /// `/attention` would no-op against it and never pause. Picking a channel
+    /// *is* user interaction, so the alert clears with it.
     private func handleRefreshIfShowing() {
         cmLog("refreshIfShowing: state=\(state) channel=\(settings.channel)")
         switch state {
