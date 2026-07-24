@@ -18,10 +18,17 @@ refocuses, all without touching the mouse again.
 ```bash
 git clone https://github.com/yagnikaryan/claude-maxxing && cd claude-maxxing
 ./scripts/install.sh
+./scripts/doctor.sh     # verify — exits 0 when healthy
 ```
 
 Then restart Claude Code (or run `/hooks`) so it picks up the new hooks, and run
 `/claude-maxx setup` to sign into the platforms you want. That's the whole install.
+
+**Or let Claude do it.** Open Claude Code in the clone and say *"set this up"* — the repo ships
+a `setup-claude-maxx` skill and a `CLAUDE.md`, so your agent knows the install, the verify step,
+and the parts only you can do (platform logins, picking a mode). `./scripts/doctor.sh` is
+written to be read by an agent: one `STATUS  check  detail` line per check, a `↳ fix:` line
+under anything wrong, and an exit code — so "did it work?" is checkable rather than guessed.
 
 `install.sh` builds the release binary, writes `~/.claude/commands/claude-maxx.md` with the paths
 pointing at *your* clone, merges this project's five hook entries into `~/.claude/settings.json`,
@@ -91,6 +98,25 @@ A pinned setup window blocks the normal per-prompt flow while it's up (no chip w
 prompt endings won't close it) — that's what `hide` is for. `/claude-maxx off` also closes it, but
 additionally turns the whole feature off, which is usually not what you want after setup.
 
+## The Reading channel
+
+Reading is your own list rather than someone's feed: web articles and local files (PDFs, mostly)
+held together and picked from **CM menu bar icon → Reading**. The submenu lists what you've added
+— **Add Link…** takes a pasted URL or a file path, **Add PDF…** opens a file picker. Choosing an
+entry switches to Reading and opens it; **Remove** drops the selected one. An empty list says so
+in the window instead of showing a blank page.
+
+Two things worth knowing:
+
+- **Scroll position is remembered for web pages, not PDFs.** A PDF rendered by WebKit isn't a DOM,
+  so the injected scroll-restore script never runs — PDFs reopen at the top. Web articles resume
+  where you left off, across hide/show and across relaunch.
+- **The list stores paths, not file handles.** Move or rename a file and the entry goes stale; the
+  window will tell you which one rather than going blank.
+
+There's deliberately no auto-advance here — reaching the end of a page isn't a request for a
+different one. You move between entries yourself.
+
 ## Config knobs
 
 All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
@@ -104,7 +130,9 @@ All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
 | `cm.dailyCapMinutes` | `0` (off) | daily content-time cap in minutes |
 | `cm.snapBack` | `true` | re-activate your previously-frontmost app on hide |
 | `cm.windowFrame` | unset until first hide | last dragged/resized window position |
-| `cm.scroll.<urlhash>` | `0.0` | per-article scroll offset (reading channel) |
+| `cm.reading.urls` | `[]` | reading list — web links and local file paths, in one list |
+| `cm.reading.currentIndex` | `0` | which reading-list entry is selected |
+| `cm.scroll.<urlhash>` | `0.0` | per-article scroll offset (reading channel, web pages only) |
 
 **Start with Claude Code:** the menu bar's toggle isn't a `cm.*` default either — it lives in
 `~/.claude/settings.json` as a `SessionStart` hook, so the setting is visible and editable in the
@@ -185,6 +213,27 @@ logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/Cla
 (`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`).
 
 ## FAQ
+
+**Something's wrong and I don't know what.** Run [`./scripts/doctor.sh`](./scripts/doctor.sh). It
+checks the toolchain, the build, whether the running daemon is actually *this* clone's binary and
+newer than your sources, the loopback port, the slash command, and the hook entries — printing a
+`↳ fix:` line under anything wrong and exiting non-zero if the daemon can't work as-is. It's
+read-only, so it's always safe to run.
+
+**I changed the code and nothing changed.** The daemon is long-lived and a rebuild doesn't touch
+the running process, so you're watching the old binary. `swift build -c release &&
+./scripts/restart.sh`. This is the single most convincing false negative in the project — a fix
+that "didn't work" is usually a stale daemon, which is why `doctor.sh` checks binary freshness.
+
+**Two Claude Code sessions and the window closes while one is still working.** Fixed, but worth
+knowing why: the hooks read `session_id` with `jq`, which ships in macOS 15 but not in 13 or 14.
+Without it every session sent an empty id and collided on one tracking slot, so the first prompt to
+finish drove the count to zero. Empty ids now count anonymously, which handles concurrency
+correctly. On 13/14, installing `jq` additionally restores per-session identity, which the
+30-minute watchdog uses to expire one stuck session without touching the others.
+
+If it happens anyway, the log now says why: every `/start` and `/stop` records the session id and
+the resulting count, so a close is attributable to the count genuinely reaching zero — or not.
 
 **The window opened but never closes when the prompt ends.** Run `/claude-maxx status` and check
 three things. (1) `window=visible-pinned`: it's a setup/"Show Window Now" window, which ignores

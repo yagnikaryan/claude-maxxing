@@ -267,6 +267,13 @@ final class Orchestrator {
     private func handleStart(sid: String?) -> String {
         let t = now()
         let becameActive = tracker.start(sid: sid, now: t)
+        // Session accounting decides whether the window is up, but left no
+        // trace at all — so "the window closed while I was mid-prompt" was
+        // unanswerable after the fact. Log every transition with the id and
+        // the resulting count: a close is legitimate only when the count
+        // genuinely reached 0, and this is the only way to tell that from a
+        // miscounted session.
+        cmLog("session start sid=\(sid ?? "<anon>") active=\(tracker.activeCount)\(becameActive ? " (0→1)" : "")")
         if becameActive {
             waitStartedAt = t
             skippedThisWait = false
@@ -335,11 +342,35 @@ final class Orchestrator {
     }
 
     private func handleStop(sid: String?) -> String {
+        let known = sid.map { tracker.sessions.keys.contains($0) } ?? (tracker.anonCount > 0)
         let becameEmpty = tracker.stop(sid: sid)
+        // `known=false` is the tell for a stop that closed nothing it owned —
+        // a duplicate (both Stop and SessionEnd fire /stop), or an id the
+        // daemon never saw a start for. Harmless with real ids, since an
+        // unknown id is dropped; worth seeing in the log because with
+        // anonymous sessions the same duplicate *does* decrement the count.
+        cmLog("session stop sid=\(sid ?? "<anon>") known=\(known) active=\(tracker.activeCount)\(becameEmpty ? " (→0, closing)" : "")")
         if becameEmpty {
             handleWaitEnded(closedBy: .stop, suppressSnapBack: false)
         }
         return "session stopped (active=\(tracker.activeCount))"
+    }
+
+    /// Signal-driven shutdown (SIGTERM/SIGHUP/SIGINT). Closes any open
+    /// content episode so the log and the stats agree with what the user just
+    /// saw happen — before this, a killed daemon took its window off screen
+    /// with no `content` event and no log line, which is exactly the
+    /// "the window closed by itself and nothing recorded it" case.
+    func shutdown(reason: String) {
+        queue.sync {
+            cmLog("shutting down: \(reason) (state=\(state) active=\(tracker.activeCount))")
+            showTimer?.cancel()
+            showTimer = nil
+            if state == .showing || state == .alerting {
+                pauseContent()
+                logContentEnd(closedBy: .quit, at: now())
+            }
+        }
     }
 
     /// Shared "count reached 0" driver, called from both `/stop` and the

@@ -86,12 +86,32 @@ final class Router {
 
     // MARK: - Session endpoints
 
+    /// An absent *and* an empty `sid` both mean "untracked session", so both
+    /// map to nil and `SessionTracker` counts them anonymously.
+    ///
+    /// The empty case is the one that matters in the wild: the shipped hooks
+    /// pull `session_id` with `jq`, which ships in macOS 15 but *not* in 13 or
+    /// 14 — both of which this package supports. Where `jq` is missing, `sid`
+    /// comes through as the empty string, and — because the query parser maps
+    /// a valueless key to `""`, not nil —
+    /// every concurrent session collided on the single `sessions[""]` slot.
+    /// Two sessions counted as one, so the first prompt to finish drove the
+    /// count to zero and closed the window while the other was still working.
+    /// Anonymous counting handles concurrency correctly, so degrading to it
+    /// is both safe and the honest reading of "no session id".
+    private static func sessionID(from request: HTTPRequestLine) -> String? {
+        guard let sid = request.query["sid"]?.trimmingCharacters(in: .whitespaces),
+              !sid.isEmpty
+        else { return nil }
+        return sid
+    }
+
     private func handleStart(_ request: HTTPRequestLine) -> String {
-        orchestrator.start(sid: request.query["sid"])
+        orchestrator.start(sid: Self.sessionID(from: request))
     }
 
     private func handleStop(_ request: HTTPRequestLine) -> String {
-        orchestrator.stop(sid: request.query["sid"])
+        orchestrator.stop(sid: Self.sessionID(from: request))
     }
 
     private func handleAttention() -> String {

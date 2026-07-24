@@ -46,7 +46,7 @@ final class FeedPanelTests: XCTestCase {
     /// must never reload, wherever in the site the user has navigated.
     func testDoesNotReloadWhileUserIsMidLoginOnTheSameChannel() {
         XCTAssertFalse(
-            FeedPanel.shouldLoad(previousChannelID: "reels", newChannelID: "reels", hasLoadedPage: true),
+            FeedPanel.shouldLoad(loadedIdentity: "reels", newIdentity: "reels", hasLoadedPage: true),
             "re-showing the same channel must leave an in-progress login page alone"
         )
     }
@@ -106,12 +106,27 @@ final class FeedPanelTests: XCTestCase {
     /// load on a real channel switch and on the first show of a session.
     func testLoadsOnChannelSwitchAndFirstShow() {
         XCTAssertTrue(
-            FeedPanel.shouldLoad(previousChannelID: "reels", newChannelID: "tiktok", hasLoadedPage: true),
+            FeedPanel.shouldLoad(loadedIdentity: "reels", newIdentity: "tiktok", hasLoadedPage: true),
             "switching channels must load the new channel's feed"
         )
         XCTAssertTrue(
-            FeedPanel.shouldLoad(previousChannelID: nil, newChannelID: "reels", hasLoadedPage: false),
+            FeedPanel.shouldLoad(loadedIdentity: nil, newIdentity: "reels", hasLoadedPage: false),
             "first show of a session has nothing loaded yet"
+        )
+    }
+
+    /// The reason `shouldLoad` keys on `contentIdentity` rather than channel
+    /// id: picking a different article leaves the channel unchanged, so an
+    /// id-keyed comparison saw "reading" == "reading" and silently kept
+    /// showing the previous one.
+    func testLoadsWhenTheReadingSelectionChangesWithinTheSameChannel() {
+        XCTAssertTrue(
+            FeedPanel.shouldLoad(
+                loadedIdentity: "reading#0#file:///tmp/a.pdf",
+                newIdentity: "reading#1#file:///tmp/b.pdf",
+                hasLoadedPage: true
+            ),
+            "choosing another item in the reading list must load it"
         )
     }
 }
