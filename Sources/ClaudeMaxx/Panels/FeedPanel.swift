@@ -13,6 +13,39 @@ private final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Routes the keyboard to `window` when a click lands in a text field.
+///
+/// A `.nonactivatingPanel` in an `.accessory` app can become key *within the
+/// app* without the app ever becoming active — and macOS delivers keystrokes
+/// to the active app, not to a key window in an inactive one. So after the
+/// user clicks away to another app and back, typing kept going to whatever
+/// they left (reported as: TikTok's SMS code lands in Claude instead of the
+/// code box). Typing worked immediately after a login only because the app
+/// happened to still be active from the popup.
+///
+/// Activating unconditionally on click would violate SPEC decision #7 by
+/// pulling focus off the user's editor whenever they unmute or scroll a
+/// video. Asking the page whether the click actually focused an editable
+/// element keeps the fix scoped to the one case that needs the keyboard.
+func cmActivateIfEditingText(in webView: WKWebView, window: NSWindow) {
+    let probe = """
+    (function() {
+      var e = document.activeElement;
+      if (!e) return false;
+      var tag = (e.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || e.isContentEditable === true;
+    })()
+    """
+    webView.evaluateJavaScript(probe) { result, _ in
+        guard (result as? Bool) == true else { return }
+        if !NSApp.isActive {
+            cmLog("focus: click landed in a text field — activating so keystrokes reach it")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if !window.isKeyWindow { window.makeKey() }
+    }
+}
+
 /// Timestamped stderr trace. The daemon runs headless behind a menu bar icon,
 /// so stderr (redirected to a log file by the launcher) is the only place
 /// window/navigation behavior can be reconstructed after the fact — a login
@@ -167,6 +200,15 @@ final class FeedPanel: NSPanel, FeedPresenting {
     /// *accepts* key when the user deliberately clicks into it, Spotlight-
     /// style, which is precisely what a login flow needs.
     override var canBecomeKey: Bool { true }
+
+    /// Checked on mouse-*up*, after WebKit has handled the click and moved
+    /// focus — at mouse-down `document.activeElement` is still the element
+    /// the user is clicking away from.
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        guard event.type == .leftMouseUp else { return }
+        cmActivateIfEditingText(in: webView, window: self)
+    }
 
     /// Channel scripts report through the `cm` bridge. Registering it was
     /// missing entirely, and the JS post is wrapped in a try/catch, so every

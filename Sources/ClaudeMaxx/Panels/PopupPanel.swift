@@ -80,6 +80,16 @@ final class PopupPanel: NSPanel {
     /// hold key — see `FeedPanel.canBecomeKey` for why the default is false.
     override var canBecomeKey: Bool { true }
 
+    /// Key status alone isn't enough in an `.accessory` app whose panels
+    /// don't activate it — see `cmActivateIfEditingText`. Without this, a
+    /// user who clicks away mid-login and comes back types into the app they
+    /// left instead of the form in front of them.
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        guard event.type == .leftMouseUp else { return }
+        cmActivateIfEditingText(in: webView, window: self)
+    }
+
     override func close() {
         super.close()
         onClose?()
