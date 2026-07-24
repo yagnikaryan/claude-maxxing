@@ -90,9 +90,10 @@ final class Router {
     /// map to nil and `SessionTracker` counts them anonymously.
     ///
     /// The empty case is the one that matters in the wild: the shipped hooks
-    /// pull `session_id` with `jq`, which macOS does not include. On a stock
-    /// machine `jq` is missing, `sid` comes through as the empty string, and
-    /// — because the query parser maps a valueless key to `""`, not nil —
+    /// pull `session_id` with `jq`, which ships in macOS 15 but *not* in 13 or
+    /// 14 — both of which this package supports. Where `jq` is missing, `sid`
+    /// comes through as the empty string, and — because the query parser maps
+    /// a valueless key to `""`, not nil —
     /// every concurrent session collided on the single `sessions[""]` slot.
     /// Two sessions counted as one, so the first prompt to finish drove the
     /// count to zero and closed the window while the other was still working.

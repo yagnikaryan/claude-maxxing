@@ -73,8 +73,14 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
 - **`FeedPanel.shouldLoad` keys on `contentIdentity`, not channel id** — a channel that can
   change content without changing identity (Reading) must fold the selection in, or switching
   items silently keeps the old page.
-- **macOS ships no `jq`** — the hooks use it to read `session_id`. Without it `sid` arrives
-  empty; `HookServer.sessionID(from:)` maps that to nil so sessions count anonymously. Do not
-  "simplify" that back to passing the raw query value.
+- **`jq` ships in macOS 15 but not 13/14** — the hooks use it to read `session_id`. Without it
+  `sid` arrives empty; `HookServer.sessionID(from:)` maps that to nil so sessions count
+  anonymously. Do not "simplify" that back to passing the raw query value.
+- **The daemon must keep its own session** — `main.swift` calls `setsid()` at startup because
+  every launcher uses `nohup … &`, which leaves it in the spawning hook's process group where a
+  group-wide signal kills it mid-prompt. Do not remove it, and do not add a launcher that
+  re-parents it into someone else's group.
+- **Never `print()` from the daemon** — stdout is block-buffered into the log file, so the line
+  is lost unless the process exits cleanly. Use `cmLog` (stderr, unbuffered).
 - **Style** — comments explain *why*, especially the failure that motivated the code. Match
   that; do not add narration of what a line does.
