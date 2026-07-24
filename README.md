@@ -207,6 +207,13 @@ logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/Cla
 
 ## FAQ
 
+**Two Claude Code sessions and the window closes while one is still working.** Fixed, but worth
+knowing why: the hooks read `session_id` with `jq`, which macOS doesn't ship. Without it every
+session sent an empty id and collided on one tracking slot, so the first prompt to finish drove the
+count to zero. Empty ids now count anonymously, which handles concurrency correctly. Installing
+`jq` additionally restores per-session identity, which the 30-minute watchdog uses to expire one
+stuck session without touching the others.
+
 **The window opened but never closes when the prompt ends.** Run `/claude-maxx status` and check
 three things. (1) `window=visible-pinned`: it's a setup/"Show Window Now" window, which ignores
 prompt endings by design — `/claude-maxx hide` closes it. (2) `active_sessions` > 1: the window

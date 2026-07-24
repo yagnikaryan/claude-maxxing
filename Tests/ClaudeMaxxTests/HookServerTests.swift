@@ -50,6 +50,31 @@ final class HookServerTests: XCTestCase {
         XCTAssertEqual(status, "mode=ask active_sessions=1 window=hidden auto_advance=true")
     }
 
+    /// Regression: macOS ships no `jq`, so on a stock machine the hooks send
+    /// `?sid=` with nothing after it. The query parser maps a valueless key to
+    /// `""` rather than nil, so every session collided on one `sessions[""]`
+    /// slot — two concurrent sessions counted as one, and the first prompt to
+    /// finish closed the window on the other. Empty must count anonymously,
+    /// which tracks concurrency correctly.
+    func testEmptySessionIDsAreCountedIndependentlyNotCollapsedIntoOne() {
+        let router = makeRouter()
+
+        _ = router.route(HTTPRequestLine.parse("GET /start?sid= HTTP/1.1")!)
+        _ = router.route(HTTPRequestLine.parse("GET /start?sid= HTTP/1.1")!)
+        XCTAssertEqual(
+            router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!),
+            "mode=ask active_sessions=2 window=hidden auto_advance=true",
+            "two jq-less sessions are two sessions"
+        )
+
+        _ = router.route(HTTPRequestLine.parse("GET /stop?sid= HTTP/1.1")!)
+        XCTAssertEqual(
+            router.route(HTTPRequestLine.parse("GET /status HTTP/1.1")!),
+            "mode=ask active_sessions=1 window=hidden auto_advance=true",
+            "one finishing must not close the window on the other"
+        )
+    }
+
     func testCmdModeGrammar() {
         let router = makeRouter()
 
