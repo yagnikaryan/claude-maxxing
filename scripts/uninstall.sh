@@ -93,6 +93,6 @@ Done. Your data was left in place:
   settings  defaults delete ClaudeMaxx
   logs      ~/Library/Logs/ClaudeMaxx.log
 
-If you turned on "Launch at Login", switch it off in System Settings →
-General → Login Items & Extensions. Then delete $repo whenever you like.
+Nothing else is left running or registered — there is no login item and no
+launch agent. Delete $repo whenever you like.
 EOF

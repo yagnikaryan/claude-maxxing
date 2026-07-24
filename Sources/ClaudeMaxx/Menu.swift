@@ -88,13 +88,14 @@ final class Menu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        let loginItemTitle = LoginItem.requiresApproval
-            ? "Launch at Login (approve in System Settings…)"
-            : "Launch at Login"
-        let loginItem = NSMenuItem(title: loginItemTitle, action: #selector(toggleLoginItem), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = LoginItem.isEnabled ? .on : .off
-        menu.addItem(loginItem)
+        let startupItem = NSMenuItem(
+            title: "Start with Claude Code",
+            action: #selector(toggleStartupHook),
+            keyEquivalent: ""
+        )
+        startupItem.target = self
+        startupItem.state = StartupHook.isEnabled ? .on : .off
+        menu.addItem(startupItem)
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit Claude Maxx", action: #selector(quitApp), keyEquivalent: "q")
@@ -162,17 +163,17 @@ final class Menu: NSObject, NSMenuDelegate {
         orchestrator.showNow(openedBy: .menu)
     }
 
-    /// If approval is pending, deep-link to System Settings instead of
-    /// re-registering (which would just come back `.requiresApproval`
-    /// again). Otherwise flip the OS-level login item and immediately
-    /// re-query live status — same "rebuild reflects reality now" pattern
-    /// as `selectMode`/`selectChannel`'s implicit rebuild on next open.
-    @objc private func toggleLoginItem() {
-        if LoginItem.requiresApproval {
-            LoginItem.openSystemSettings()
-        } else {
-            LoginItem.setEnabled(!LoginItem.isEnabled)
-        }
+    /// Adds or removes the `SessionStart` hook that starts the daemon with
+    /// Claude Code, then rebuilds so the checkbox reflects what is actually in
+    /// `settings.json` — the same "rebuild reflects reality now" pattern as
+    /// `selectMode`/`selectChannel`. Turning it off means you start the daemon
+    /// yourself (`/claude-maxx` does it on demand); it never stops an
+    /// already-running daemon, which is what "Quit Claude Maxx" is for.
+    ///
+    /// An already-open Claude Code session won't pick up a hook change until
+    /// it restarts, so this takes effect from the next session onward.
+    @objc private func toggleStartupHook() {
+        StartupHook.setEnabled(!StartupHook.isEnabled)
         rebuildMenu()
     }
 

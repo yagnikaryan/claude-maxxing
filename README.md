@@ -40,11 +40,15 @@ Code, so its lifetime matches the only thing it reacts to. If it somehow isn't r
 and re-sends your subcommand, so the first `/claude-maxx status` of the day both starts the daemon
 and answers. During development, `swift run` in the foreground works too.
 
-This is deliberately *not* a login item. With no packaged `.app` there's no bundle identity for
-macOS to register, so "Launch at Login" records the path of whatever binary was running and goes
-stale on a clean or release rebuild — and it would leave a daemon running all day for an app that
-only does anything while Claude Code is open. The menu bar toggle still exists if you want it, but
-you shouldn't need it.
+That hook is a toggle, not a fixture: the menu bar's **"Start with Claude Code"** item adds or
+removes it, and the checkbox reflects what is actually in `settings.json`. Turn it off and you
+start the daemon yourself — `/claude-maxx` still does that on demand. Because a running Claude Code
+session reads its hooks at startup, a change takes effect from the *next* session.
+
+There is deliberately no "Launch at Login". With no packaged `.app` there's no bundle identity for
+macOS to register, so a login item records the path of whatever binary was running and goes stale
+on a clean or release rebuild — and it would keep a daemon alive all day for something that only
+reacts to Claude Code.
 
 ## `/claude-maxx` command
 
@@ -101,12 +105,11 @@ All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
 | `cm.windowFrame` | unset until first hide | last dragged/resized window position |
 | `cm.scroll.<urlhash>` | `0.0` | per-article scroll offset (reading channel) |
 
-**Login item:** the menu bar's "Launch at Login" toggle isn't a `cm.*` default — it's a real
-per-user macOS setting backed by `SMAppService`, visible in System Settings → General → Login
-Items & Extensions. You shouldn't need it: the `SessionStart` hook already starts the daemon with
-Claude Code, and that costs nothing when Claude isn't running. If you do turn it on, note that with
-no packaged `.app` it registers whatever binary path is running at the time, so a clean or release
-rebuild changes that path and requires re-toggling. Toggling it off in the menu removes the entry.
+**Start with Claude Code:** the menu bar's toggle isn't a `cm.*` default either — it lives in
+`~/.claude/settings.json` as a `SessionStart` hook, so the setting is visible and editable in the
+same place as every other hook. `scripts/claude-maxx-hook.sh status|enable|disable` is the same
+control from a terminal. Re-running `install.sh` turns it back on, since that's the default for a
+fresh install.
 
 ## How it works
 
@@ -153,8 +156,7 @@ alongside. Then delete the clone whenever you like.
 Your data is deliberately left in place, so a reinstall picks up where you left off. The script
 prints all four locations on exit: stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`),
 logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/ClaudeMaxx`), settings
-(`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`). If you turned on
-"Launch at Login", switch it off in System Settings → General → Login Items & Extensions.
+(`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`).
 
 ## FAQ
 
@@ -228,11 +230,10 @@ Safari/Chrome.
 fails silently and falls back to anonymous session counting — everything still works, you just
 lose per-session watchdog precision. `brew install jq` if you want it, but it's not required.
 
-**Does the "Launch at Login" toggle leave something behind?** Yes, deliberately — it's backed by
-real OS state (`SMAppService`, visible under System Settings → General → Login Items &
-Extensions), not an app-internal preference. Toggling it back off in the menu removes the entry
-cleanly. Pre-M3 it's tied to whichever binary path registered it (see Config knobs above), so a
-clean rebuild may need a re-toggle.
+**Does anything run when Claude Code isn't open?** No. There's no login item and no launch agent —
+the only thing that starts the daemon is the `SessionStart` hook (or you, via `/claude-maxx`), and
+"Quit Claude Maxx" in the menu ends it. Turning the toggle off leaves nothing behind but the
+absence of a hook entry; `uninstall.sh` removes the rest.
 
 ## Trust posture
 
