@@ -4,15 +4,13 @@ import WebKit
 /// Layer 3 channel adapter for the X (Twitter) home feed (SPEC §8.3).
 ///
 /// Unlike the video channels, XFeed has no watch-complete concept — it is
-/// ambient. Instead of a per-video `ended` advance, the channel drives a
-/// slow, continuous auto-scroll that pauses whenever the pointer is over the
-/// page (so the user can read/interact) and resumes when it leaves. Per
-/// SPEC §8.4, `/attention` overlays a dismissible banner without touching
-/// scroll position — yanking text mid-sentence is hostile.
-///
-/// Decision #10 (§15): X feed is the easiest ambient channel to build,
-/// picked as the second channel after Shorts precisely because it needs no
-/// per-site "next" selector — just scroll.
+/// ambient, and deliberately has **no auto-scroll at all**. An earlier build
+/// drove a slow continuous scroll (SPEC §8.3's literal 2px/30ms loop, paused
+/// on hover); in practice a timeline you read at your own pace has nothing to
+/// gain from the page creeping under the pointer, so the loop was removed —
+/// the user scrolls, the channel just hosts the page. Per SPEC §8.4,
+/// `/attention` overlays a dismissible banner without touching scroll
+/// position — yanking text mid-sentence is hostile.
 struct XFeedChannel: ContentChannel {
     let id = "xfeed"
     let displayName = "X"
@@ -25,11 +23,9 @@ struct XFeedChannel: ContentChannel {
     let preferredAspect = NSSize(width: 4, height: 5)
 
     /// Ambient, not completion-based (SPEC §8.3) — there is no "video
-    /// ended" signal to advance on, so the chip/menu never offers
-    /// auto-advance toggling for this channel's completion semantics.
-    /// `setAutoAdvance` below still exists (protocol requirement) and is
-    /// repurposed to gate the auto-scroll loop, since that's this channel's
-    /// only "auto" behavior.
+    /// ended" signal to advance on, and no auto-scroll either (see the
+    /// type-level comment), so the chip/menu never offers auto-advance
+    /// toggling here and `setAutoAdvance` has nothing to gate.
     let supportsAutoAdvance = false
 
     func userScript() -> WKUserScript {
@@ -41,18 +37,13 @@ struct XFeedChannel: ContentChannel {
     }
 
     func setAutoAdvance(_ on: Bool, in webView: WKWebView) {
-        // Reuses the `__cmAutoAdvance` flag name from the shared injected-JS
-        // convention (SPEC "Naming conventions"), repurposed here to gate
-        // the auto-scroll `setInterval` loop instead of a video "next"
-        // control — this channel has no completion event to advance on.
-        webView.evaluateJavaScript("window.__cmAutoAdvance = \(on);")
+        // Protocol requirement only. With the auto-scroll loop gone there is
+        // no "auto" behavior left to toggle on this channel.
     }
 
     func pause(in webView: WKWebView) {
-        // Called before hide (SPEC §8.1). Stops the auto-scroll loop so the
-        // page sits still while the panel is hidden; resumed on next
-        // `show(channel:)` via FeedPanel's `setAutoAdvance` call.
-        webView.evaluateJavaScript("window.__cmAutoAdvance = false;")
+        // Nothing plays and nothing moves on its own — a static timeline is
+        // already "paused". Kept as an explicit no-op (protocol requirement).
     }
 
     func attention(in webView: WKWebView) {
@@ -64,33 +55,14 @@ struct XFeedChannel: ContentChannel {
 
     // MARK: - Injected JS
 
-    /// Slow auto-scroll (2px / 30ms, per SPEC §8.3's literal
-    /// `setInterval(() => scrollBy({top: 2, behavior:'instant'}), 30)`)
-    /// paused on `mouseenter` and resumed on `mouseleave`, plus the
-    /// dismissible attention banner from §8.4. Guarded by `__cmInstalled`
-    /// like the §8.2 video pattern, so re-injection on reload is a no-op.
+    /// Just the dismissible attention banner from §8.4 — no scroll loop; the
+    /// timeline moves only when the user moves it (see the type-level
+    /// comment). Guarded by `__cmInstalled` like the §8.2 video pattern, so
+    /// re-injection on reload is a no-op.
     private static let scriptSource = """
     (function() {
       if (window.__cmInstalled) return;
       window.__cmInstalled = true;
-      window.__cmAutoAdvance = true;   // native toggles this via setAutoAdvance/pause
-
-      var hovering = false;
-
-      setInterval(function() {
-        if (!window.__cmAutoAdvance || hovering) return;
-        window.scrollBy({ top: 2, left: 0, behavior: 'instant' });
-      }, 30);
-
-      // mouseenter/mouseleave on documentElement don't bubble, so they fire
-      // exactly once when the pointer crosses into/out of the page — not
-      // per descendant hover.
-      document.documentElement.addEventListener('mouseenter', function() {
-        hovering = true;
-      });
-      document.documentElement.addEventListener('mouseleave', function() {
-        hovering = false;
-      });
 
       window.__cmShowAttentionBanner = function() {
         if (document.getElementById('__cm-attention-banner')) return;   // already showing

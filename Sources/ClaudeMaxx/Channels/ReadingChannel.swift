@@ -2,10 +2,12 @@ import AppKit
 import WebKit
 
 /// Layer 3 reading-list channel (SPEC §8.3). A user-supplied, paste-in list
-/// of article URLs; "next article" is this channel's auto-advance action
-/// (there is no video `ended` event to key off, so completion is inferred
-/// from the reader scrolling near the bottom of the page — see
-/// `userScript()`). Per-URL scroll offset is persisted through
+/// of article URLs. Deliberately has **no auto-advance**: an earlier build
+/// inferred "done reading" from scrolling near the bottom and loaded the next
+/// article on its own, but reaching the end of a page is not a request for a
+/// different one — people linger, re-read, and scroll past the fold to the
+/// comments. Moving between articles is `advance()`, a manual action only.
+/// Per-URL scroll offset is persisted through
 /// `SettingsStore`'s existing `cm.scroll.<urlhash>` API (§9.1) so a
 /// hide/show cycle — or an app relaunch — resumes mid-paragraph rather than
 /// at the top.
@@ -39,8 +41,9 @@ final class ReadingChannel: ContentChannel {
     /// ~4:5, per §8.1 ("9:16 video, ~4:5 reading").
     let preferredAspect = NSSize(width: 4, height: 5)
 
-    /// "Next article" is this channel's auto-advance action (§8.3).
-    let supportsAutoAdvance = true
+    /// No auto behavior at all (see the type-level comment) — reading pace
+    /// belongs to the reader.
+    let supportsAutoAdvance = false
 
     /// The currently-selected article. Falls back to `placeholderURL` when
     /// the list is empty or `currentIndex` is out of range (e.g. the list
@@ -62,13 +65,9 @@ final class ReadingChannel: ContentChannel {
         return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
     }
 
-    /// Native-side flag flip mirroring §8.2's video-channel convention
-    /// (`evaluateJavaScript("window.__cmAutoAdvance = ...")`, no reload) —
-    /// here it gates the bottom-of-article advance detection installed by
-    /// `userScript()` instead of a video `ended` listener.
-    func setAutoAdvance(_ on: Bool, in webView: WKWebView) {
-        webView.evaluateJavaScript("window.__cmAutoAdvance = \(on);")
-    }
+    /// Protocol requirement only. There is no auto behavior on this channel
+    /// to gate (see the type-level comment).
+    func setAutoAdvance(_ on: Bool, in webView: WKWebView) {}
 
     /// Called before hide (per the protocol's contract). This is the
     /// channel's one chance to capture "where was the reader" before the
@@ -117,14 +116,13 @@ final class ReadingChannel: ContentChannel {
         set { defaults.set(newValue, forKey: Keys.currentIndex) }
     }
 
-    /// Advances to the next article in the list ("next article" is this
-    /// channel's auto-advance action, §8.3). Non-wrapping — returns `false`
-    /// and leaves `currentIndex` unchanged at the end of the list, so a
-    /// caller (the future chip/menu integration, or the JS bottom-of-page
-    /// detector once the `cm` message handler is wired up) can tell whether
-    /// there's anywhere left to advance to. Callers are responsible for
-    /// reloading the webview against the new `url` afterward — this method
-    /// only moves the list cursor.
+    /// Advances to the next article in the list — a *manual* action for a
+    /// future chip/menu control; nothing calls it automatically (the old
+    /// bottom-of-page detector is gone, see the type-level comment).
+    /// Non-wrapping — returns `false` and leaves `currentIndex` unchanged at
+    /// the end of the list, so a caller can tell whether there's anywhere
+    /// left to advance to. Callers are responsible for reloading the webview
+    /// against the new `url` afterward — this method only moves the cursor.
     @discardableResult
     func advance() -> Bool {
         let list = urls
@@ -142,43 +140,20 @@ final class ReadingChannel: ContentChannel {
         "window.pageYOffset || document.documentElement.scrollTop || 0;"
 
     /// Injected at `.atDocumentEnd` (§8.1). Restores the persisted scroll
-    /// offset for the article being loaded and installs a lightweight
-    /// bottom-of-article detector that reports "advance" the same way §8.2
-    /// describes for video channels — guarded by `window.__cmAutoAdvance`
-    /// and a fired-once latch — via the `cm` message handler once that
-    /// handler exists on the native side. The `window.webkit...cm` presence
-    /// check makes this forward-compatible: it no-ops harmlessly today.
+    /// offset for the article being loaded — and nothing else. The
+    /// bottom-of-article advance detector that used to live here is gone
+    /// (see the type-level comment): reaching the end of a page must never
+    /// navigate the reader somewhere they didn't ask to go.
     private static func scriptSource(restoreOffset: Double) -> String {
         """
         (function() {
           if (window.__cmReadingInstalled) return;
           window.__cmReadingInstalled = true;
-          window.__cmAutoAdvance = window.__cmAutoAdvance || false;
-          var __cmAdvanceFired = false;
           var __cmRestoreY = \(restoreOffset);
 
           function __cmRestoreScroll() {
             if (__cmRestoreY > 0) { window.scrollTo(0, __cmRestoreY); }
           }
-          function __cmPostAdvance() {
-            if (__cmAdvanceFired) return;
-            __cmAdvanceFired = true;
-            try {
-              if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cm) {
-                window.webkit.messageHandlers.cm.postMessage('advance');
-              }
-            } catch (e) {}
-          }
-          function __cmNearBottom() {
-            var doc = document.documentElement;
-            var scrollHeight = Math.max(doc.scrollHeight, document.body ? document.body.scrollHeight : 0);
-            return (window.scrollY + window.innerHeight) >= (scrollHeight - 40);
-          }
-
-          window.addEventListener('scroll', function() {
-            if (!window.__cmAutoAdvance) return;
-            if (__cmNearBottom()) { __cmPostAdvance(); }
-          }, { passive: true });
 
           // .atDocumentEnd may run before or after DOMContentLoaded/load —
           // cover both, and re-apply on 'load' since image/layout shifts
