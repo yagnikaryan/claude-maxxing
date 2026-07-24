@@ -40,7 +40,12 @@ if [ -f "$settings" ] && command -v python3 >/dev/null 2>&1; then
 import json, os, shutil, sys
 
 settings_path = os.environ["CM_SETTINGS"]
-MARKER = "127.0.0.1:8765"
+# Mirrors install.sh: SessionStart runs a script by path rather than talking
+# to the daemon over HTTP, so the URL alone would miss it.
+MARKERS = ("127.0.0.1:8765", "claude-maxx-ensure.sh")
+
+def ours_hook(command):
+    return any(m in command for m in MARKERS)
 
 with open(settings_path) as f:
     try:
@@ -53,7 +58,7 @@ removed = 0
 for event in list(hooks):
     groups = []
     for group in hooks[event]:
-        survivors = [h for h in group.get("hooks", []) if MARKER not in h.get("command", "")]
+        survivors = [h for h in group.get("hooks", []) if not ours_hook(h.get("command", ""))]
         removed += len(group.get("hooks", [])) - len(survivors)
         if survivors:
             groups.append(dict(group, hooks=survivors))

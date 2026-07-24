@@ -24,9 +24,9 @@ Then restart Claude Code (or run `/hooks`) so it picks up the new hooks, and run
 `/claude-maxx setup` to sign into the platforms you want. That's the whole install.
 
 `install.sh` builds the release binary, writes `~/.claude/commands/claude-maxx.md` with the paths
-pointing at *your* clone, merges this project's four hook entries into `~/.claude/settings.json`,
-and starts the daemon. It's safe to re-run — hooks are matched by their loopback URL, so a re-run
-replaces this project's entries and leaves every other hook you have alone, and `settings.json` is
+pointing at *your* clone, merges this project's five hook entries into `~/.claude/settings.json`,
+and starts the daemon. It's safe to re-run — hooks are matched by this project's own markers, so a
+re-run replaces our entries and leaves every other hook you have alone, and `settings.json` is
 backed up to `settings.json.claude-maxx.bak` first. Requires `python3` (preinstalled on macOS) to
 edit that JSON safely.
 
@@ -34,10 +34,17 @@ There's no `.app`, no installer package, and nothing signed to trust — the dae
 inside your clone, started from there. [`scripts/uninstall.sh`](./scripts/uninstall.sh) is the
 exact inverse and leaves your stats, logins, and settings in place.
 
-**Running the daemon by hand** isn't necessary: `/claude-maxx` starts it on demand. If nothing is
-listening on `127.0.0.1:8765`, the wrapper launches the binary from your clone, waits for it, and
-re-sends your subcommand — so the first `/claude-maxx status` of the day both starts the daemon and
-answers. During development, `swift run` in the foreground works too.
+**You never start the daemon by hand.** A `SessionStart` hook starts it whenever you open Claude
+Code, so its lifetime matches the only thing it reacts to. If it somehow isn't running,
+`/claude-maxx` also starts it on demand: the wrapper launches the binary from your clone, waits,
+and re-sends your subcommand, so the first `/claude-maxx status` of the day both starts the daemon
+and answers. During development, `swift run` in the foreground works too.
+
+This is deliberately *not* a login item. With no packaged `.app` there's no bundle identity for
+macOS to register, so "Launch at Login" records the path of whatever binary was running and goes
+stale on a clean or release rebuild — and it would leave a daemon running all day for an app that
+only does anything while Claude Code is open. The menu bar toggle still exists if you want it, but
+you shouldn't need it.
 
 ## `/claude-maxx` command
 
@@ -96,16 +103,18 @@ All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
 
 **Login item:** the menu bar's "Launch at Login" toggle isn't a `cm.*` default — it's a real
 per-user macOS setting backed by `SMAppService`, visible in System Settings → General → Login
-Items & Extensions. Pre-M3 (no packaged `.app` yet), toggling it on registers whatever binary path
-is currently running (e.g. `swift run`'s `.build/*/debug/ClaudeMaxx`), so a clean/release rebuild
-changes that path and may require re-toggling it. Toggling it off in the menu removes the entry.
+Items & Extensions. You shouldn't need it: the `SessionStart` hook already starts the daemon with
+Claude Code, and that costs nothing when Claude isn't running. If you do turn it on, note that with
+no packaged `.app` it registers whatever binary path is running at the time, so a clean or release
+rebuild changes that path and requires re-toggling. Toggling it off in the menu removes the entry.
 
 ## How it works
 
 ```
 LAYER 1 · SIGNAL & INTENT (inside Claude Code)
   hooks (automatic, every prompt)       slash command (manual)
-  UserPromptSubmit → /start?sid=X       /claude-maxx <arg> → /cmd?arg=<arg>
+  SessionStart     → start the daemon   /claude-maxx <arg> → /cmd?arg=<arg>
+  UserPromptSubmit → /start?sid=X
   Stop             → /stop?sid=X
   SessionEnd       → /stop?sid=X
   Notification     → /attention
@@ -137,9 +146,9 @@ truth and neither wire needs to know the other exists.
 ./scripts/uninstall.sh
 ```
 
-Stops the daemon, deletes `~/.claude/commands/claude-maxx.md`, and strips the four hook entries
-whose `command` contains `127.0.0.1:8765` from `~/.claude/settings.json` — leaving any other hooks
-you have untouched, with a backup alongside. Then delete the clone whenever you like.
+Stops the daemon, deletes `~/.claude/commands/claude-maxx.md`, and strips this project's five hook
+entries from `~/.claude/settings.json` — leaving any other hooks you have untouched, with a backup
+alongside. Then delete the clone whenever you like.
 
 Your data is deliberately left in place, so a reinstall picks up where you left off. The script
 prints all four locations on exit: stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`),
@@ -228,7 +237,8 @@ clean rebuild may need a re-toggle.
 ## Trust posture
 
 Loopback-only bind; no prompt text, transcript, or cwd ever reaches the daemon; stats never leave
-the machine. `install.sh` touches exactly two paths under `~/.claude/`: it merges hook entries into
+the machine. Nothing runs at login or in the background when Claude Code isn't open. `install.sh`
+touches exactly two paths under `~/.claude/`: it merges hook entries into
 `settings.json` (backed up first, other hooks preserved) and writes one file at
 `commands/claude-maxx.md`. Nothing else in `~/.claude/` is read or written, nothing is installed
 outside your clone, and `uninstall.sh` reverses both. Read the two scripts before running them —

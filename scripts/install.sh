@@ -3,7 +3,7 @@
 # start the daemon. Safe to re-run — every step is idempotent.
 #
 # Deliberately does not install anything outside the repo except two things
-# under ~/.claude: the command file, and this project's four hook entries.
+# under ~/.claude: the command file, and this project's five hook entries.
 # See uninstall.sh for the exact inverse.
 set -euo pipefail
 
@@ -13,6 +13,7 @@ settings="$claude_dir/settings.json"
 cmd_src="$repo/claude-config/commands/claude-maxx.md"
 cmd_dst="$claude_dir/commands/claude-maxx.md"
 wrapper="$repo/scripts/claude-maxx-cmd.sh"
+ensure="$repo/scripts/claude-maxx-ensure.sh"
 
 say() { printf '  %s\n' "$*"; }
 
@@ -38,7 +39,7 @@ say "built $repo/.build/release/ClaudeMaxx"
 #    path also goes in allowed-tools so running it never prompts.
 echo
 echo "[2/4] Installing /claude-maxx command…"
-chmod +x "$wrapper"
+chmod +x "$wrapper" "$ensure"
 mkdir -p "$(dirname "$cmd_dst")"
 sed "s|__CM_CMD_PATH__|$wrapper|g" "$cmd_src" > "$cmd_dst"
 say "wrote $cmd_dst"
@@ -49,15 +50,23 @@ say "wrote $cmd_dst"
 #    leaves every other hook untouched.
 echo
 echo "[3/4] Merging hooks into ${settings}…"
-CM_SETTINGS="$settings" CM_HOOKS="$repo/hooks-settings.json" python3 <<'PY'
+CM_SETTINGS="$settings" CM_HOOKS="$repo/hooks-settings.json" CM_ENSURE="$ensure" python3 <<'PY'
 import json, os, shutil, sys
 
 settings_path = os.environ["CM_SETTINGS"]
 hooks_path = os.environ["CM_HOOKS"]
-MARKER = "127.0.0.1:8765"
+# Two markers because not every hook of ours talks to the daemon over HTTP:
+# SessionStart runs a script by absolute path. Both are specific enough that
+# nothing but this project matches.
+MARKERS = ("127.0.0.1:8765", "claude-maxx-ensure.sh")
+
+def ours_hook(command):
+    return any(m in command for m in MARKERS)
 
 with open(hooks_path) as f:
-    ours = json.load(f)["hooks"]
+    # SessionStart needs this clone's absolute path — a hook command, like a
+    # slash command, can't locate the repo on its own.
+    ours = json.loads(f.read().replace("__CM_SCRIPT__", os.environ["CM_ENSURE"]))["hooks"]
 
 if os.path.exists(settings_path):
     with open(settings_path) as f:
@@ -78,7 +87,7 @@ for event, groups in ours.items():
     # Drop only our own entries, keeping any other tool's hooks for this event.
     kept = []
     for group in existing:
-        survivors = [h for h in group.get("hooks", []) if MARKER not in h.get("command", "")]
+        survivors = [h for h in group.get("hooks", []) if not ours_hook(h.get("command", ""))]
         if len(survivors) != len(group.get("hooks", [])):
             replaced += 1
         if survivors:
