@@ -1,6 +1,18 @@
 import AppKit
 import WebKit
 
+/// Breaks the retain cycle WebKit would otherwise create: a
+/// `userContentController` retains its message handlers, and the panel owns
+/// the webview that owns the controller. Holding the panel weakly here keeps
+/// that loop open without giving up the `cm` channel.
+private final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
+    weak var target: FeedPanel?
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.handleChannelMessage(message)
+    }
+}
+
 /// Timestamped stderr trace. The daemon runs headless behind a menu bar icon,
 /// so stderr (redirected to a log file by the launcher) is the only place
 /// window/navigation behavior can be reconstructed after the fact — a login
@@ -91,6 +103,11 @@ final class FeedPanel: NSPanel, FeedPresenting {
     /// dropped in each popup's `onClose`. Internal (not private) so tests can
     /// assert a popup was hosted rather than swallowed into the feed.
     private(set) var popupPanels: [PopupPanel] = []
+    private let messageProxy = ScriptMessageProxy()
+    /// Fired when a channel confirms the feed actually moved to the next
+    /// item. Wired to the stats store in `main.swift`; `StatsEvent.advance`
+    /// is what `videos_completed` counts, and nothing was ever appending it.
+    var onAdvance: (() -> Void)?
 
     init(settings: SettingsStore = .shared) {
         self.settings = settings
@@ -151,9 +168,24 @@ final class FeedPanel: NSPanel, FeedPresenting {
     /// style, which is precisely what a login flow needs.
     override var canBecomeKey: Bool { true }
 
+    /// Channel scripts report through the `cm` bridge. Registering it was
+    /// missing entirely, and the JS post is wrapped in a try/catch, so every
+    /// advance event was thrown away silently — `videos_completed` sat at
+    /// zero and a channel that could no longer advance had no way to say so.
+    func handleChannelMessage(_ message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        let event = body["event"] as? String ?? "?"
+        let channel = body["channel"] as? String ?? "?"
+        let detail = body["detail"] as? String ?? ""
+        cmLog("channel \(channel): \(event)\(detail.isEmpty ? "" : " via \(detail)")")
+        if event == "advance" { onAdvance?() }
+    }
+
     private func configure() {
         isFloatingPanel = true
         level = .floating
+        webView.configuration.userContentController.add(messageProxy, name: "cm")
+        messageProxy.target = self
         // Partner to `canBecomeKey` above: defer key status until a click
         // lands on a view that asks for it (`needsPanelToBecomeKey`). The
         // webview reports it always wants key, so in practice any click on

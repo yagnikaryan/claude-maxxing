@@ -177,7 +177,7 @@ final class Router {
         let daily = stats.dailyStats(for: Date())
         let contentMinutes = Int(daily.contentSeconds / 60)
         let waitMinutes = Int(daily.waitSeconds / 60)
-        return "today: \(daily.waits) waits, \(contentMinutes)m content / \(waitMinutes)m waiting, \(daily.chipWatch)/\(daily.chipOffered) watched"
+        return "today: \(daily.waits) waits, \(contentMinutes)m content / \(waitMinutes)m waiting, \(daily.chipWatch)/\(daily.chipOffered) watched, \(daily.videosCompleted) videos"
     }
 }
 

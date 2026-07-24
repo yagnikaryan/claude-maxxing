@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // closures below, rather than relying on Orchestrator's default
         // lazy `{ ChipPanel() }` / `{ FeedPanel() }` factories.
         feedPanel = FeedPanel(settings: settings)
+        // `videos_completed` counts `.advance` events, which only exist if
+        // something forwards the channels' `cm` messages into the store.
+        feedPanel.onAdvance = { [stats] in stats?.append(.advance()) }
         chipPanel = ChipPanel()
 
         orchestrator = Orchestrator(
