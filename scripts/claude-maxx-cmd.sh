@@ -9,12 +9,13 @@
 
 out=$(cm_send "$*") && [ -n "$out" ] && { printf '%s\n' "$out"; exit 0; }
 
-bin=$(cm_bin "$(cm_repo "$0")")
+repo=$(cm_repo "$0")
+bin=$(cm_bin "$repo")
 [ -n "$bin" ] || {
     echo "daemon not running, and nothing built — run: swift build -c release"
     exit 0
 }
 
-cm_launch "$bin"
+cm_launch "$bin" "$repo"
 out=$(cm_await "$*") && { printf 'daemon started\n%s\n' "$out"; exit 0; }
 echo "daemon failed to start — see $(cm_log_path)"

@@ -73,15 +73,26 @@ bin="$repo/.build/release/ClaudeMaxx"
 if [ -x "$bin" ]; then
   pass "binary" "$bin"
 
-  # The trap that looks exactly like a broken feature: sources edited after the
-  # binary was built means the running daemon is old code, and every symptom is
-  # a lie. Cheap to check, so always check.
-  newest_src=$(find "$repo/Sources" -name '*.swift' -newer "$bin" -print -quit 2>/dev/null)
-  if [ -n "$newest_src" ]; then
-    fail "binary freshness" "sources are newer than the binary — it is stale"
-    fix "swift build -c release && $repo/scripts/restart.sh"
+  # The trap that looks exactly like a broken feature: sources changed since the
+  # daemon started means it is running old code, and every symptom is a lie.
+  #
+  # Compared against the start stamp, not the binary. A binary comparison is
+  # wrong after `git pull`: it rewrites source mtimes without changing content,
+  # so the binary looks stale while `swift build` correctly does nothing —
+  # leaving a warning the suggested rebuild can never clear. Restarting always
+  # clears this one, which is the point of a check that names its own fix.
+  stamp="$repo/.build/.cm-started"
+  if [ -f "$stamp" ]; then
+    newest_src=$(find "$repo/Sources" -name '*.swift' -newer "$stamp" -print 2>/dev/null | head -1)
+    if [ -n "$newest_src" ]; then
+      fail "running code" "sources changed since the daemon started — it is running old code"
+      fix "swift build -c release && $repo/scripts/restart.sh"
+    else
+      pass "running code" "daemon started after the latest source change"
+    fi
   else
-    pass "binary freshness" "newer than all sources"
+    warn "running code" "no start stamp — daemon was not started by these scripts"
+    fix "$repo/scripts/restart.sh"
   fi
 else
   fail "binary" "not built"

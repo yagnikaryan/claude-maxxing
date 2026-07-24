@@ -13,7 +13,8 @@
 
 [ -n "$(cm_send status)" ] && exit 0
 
-bin=$(cm_bin "$(cm_repo "$0")")
+repo=$(cm_repo "$0")
+bin=$(cm_bin "$repo")
 [ -n "$bin" ] || exit 0   # never built — not this hook's job to say so
-cm_launch "$bin"
+cm_launch "$bin" "$repo"
 exit 0
