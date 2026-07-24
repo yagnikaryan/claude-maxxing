@@ -14,8 +14,15 @@ enum ScrollFeedScript {
 
     /// `channelID` is interpolated into the `cm` bridge messages so the
     /// native log can attribute an advance (or a failure) to a channel.
-    static func source(channelID: String) -> String {
-        """
+    ///
+    /// `nextSelectors` are the site's own "next" controls, tried in order
+    /// before any scrolling. A site that ships one (YouTube Shorts) should use
+    /// it — clicking the real control is what the site expects, and it moves
+    /// the feed exactly one item. Sites where the selector would be a guess
+    /// (Reels, TikTok — see SPEC §8.2) pass none and scroll instead.
+    static func source(channelID: String, nextSelectors: [String] = []) -> String {
+        let selectorList = "[" + nextSelectors.map { "'\($0)'" }.joined(separator: ", ") + "]"
+        return """
         (function() {
           if (window.__cmInstalled) return;
           window.__cmInstalled = true;
@@ -26,6 +33,8 @@ enum ScrollFeedScript {
           var CM_SKIP_PROBABILITY = 1 / 12;
           var CM_ADVANCE_COOLDOWN_MS = 2500;
           var CM_HEARTBEAT_MS = 30000;
+          var CM_STUCK_RETRY_MS = 15000;
+          var CM_NEXT_SELECTORS = \(selectorList);
 
           // These feeds scroll an inner container, not the document, so
           // window.scrollBy moves nothing and window.scrollY never changes —
@@ -186,47 +195,64 @@ enum ScrollFeedScript {
             return off;
           }
 
-          // Tried in order of directness; returns a label for the log so a
-          // failing channel says which mechanisms it exhausted. Prefers moving
-          // to the *next item* and centering it, rather than scrolling a fixed
-          // distance and hoping it lines up with a snap point.
-          function cmTryAdvance() {
+          // Every way we know to move the feed on, most site-native first.
+          // Each returns false when it isn't applicable here, so the caller
+          // can fall through to the next one — and crucially each is verified
+          // afterwards, because "the button exists" is not "the feed moved".
+          // YouTube's chevron clicks cleanly and does nothing at all; the old
+          // Shorts script reported those as successful advances.
+          function cmMechanisms() {
             var v = cmCurrentVideo();
             var container = v ? cmScrollable(v) : null;
-            if (container) {
+            var list = [];
+
+            CM_NEXT_SELECTORS.forEach(function(sel) {
+              list.push({ name: 'next-button', run: function() {
+                var btn = document.querySelector(sel);
+                if (!btn) return false;
+                btn.click();
+                return true;
+              }});
+            });
+
+            list.push({ name: 'next-item', run: function() {
+              if (!container) return false;
               var item = cmItemFor(v, container);
               var next = item && item.nextElementSibling;
-              if (next) {
-                // Must use the same rule as cmAlignItems/cmRecenter. Centering
-                // an item taller than the viewport contradicts its `start`
-                // snap alignment, and the correction afterwards scrolled a
-                // full viewport back — undoing the advance entirely, which
-                // showed up as advance-failed in a short window.
-                var delta = cmDesiredOffset(next, container);
-                var beforeNext = container.scrollTop;
-                cmScrollByPx(container, delta);
-                if (Math.abs(container.scrollTop - beforeNext) > 1) {
-                  var vp = cmViewport(container);
-                  var fits = next.getBoundingClientRect().height <= (vp.bottom - vp.top);
-                  return 'next-item ' + (fits ? 'centered' : 'top-aligned');
-                }
-              }
-              // No next sibling rendered yet (virtualized list) — fall back to
-              // a viewport-sized scroll, which cmRecenter then tidies up.
-              var before = container.scrollTop;
+              if (!next) return false;
+              // Same rule as cmAlignItems/cmRecenter. Centering an item taller
+              // than the viewport contradicts its `start` snap alignment, and
+              // the correction afterwards scrolled a full viewport back —
+              // undoing the advance, seen as advance-failed in a short window.
+              var beforeTop = container.scrollTop;
+              cmScrollByPx(container, cmDesiredOffset(next, container));
+              return Math.abs(container.scrollTop - beforeTop) > 1;
+            }});
+
+            list.push({ name: 'container', run: function() {
+              if (!container) return false;
+              var beforeTop = container.scrollTop;
               container.scrollBy({ top: container.clientHeight, left: 0, behavior: 'instant' });
-              if (Math.abs(container.scrollTop - before) > 1) return 'container ' + cmDescribe(container);
-            }
-            var wBefore = window.scrollY;
-            window.scrollBy({ top: window.innerHeight, left: 0, behavior: 'instant' });
-            if (Math.abs(window.scrollY - wBefore) > 1) return 'window';
-            var target = v || document.body;
-            ['keydown', 'keyup'].forEach(function(type) {
-              target.dispatchEvent(new KeyboardEvent(type, {
-                key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true, cancelable: true
-              }));
-            });
-            return 'arrowdown (container=' + cmDescribe(container) + ')';
+              return Math.abs(container.scrollTop - beforeTop) > 1;
+            }});
+
+            list.push({ name: 'window', run: function() {
+              var beforeY = window.scrollY;
+              window.scrollBy({ top: window.innerHeight, left: 0, behavior: 'instant' });
+              return Math.abs(window.scrollY - beforeY) > 1;
+            }});
+
+            list.push({ name: 'arrowdown', run: function() {
+              var target = v || document.body;
+              ['keydown', 'keyup'].forEach(function(type) {
+                target.dispatchEvent(new KeyboardEvent(type, {
+                  key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true, cancelable: true
+                }));
+              });
+              return true;   // fire-and-hope: only the confirm below can judge it
+            }});
+
+            return list;
           }
 
           function cmNotify(event, detail) {
@@ -251,20 +277,49 @@ enum ScrollFeedScript {
             setTimeout(function() {
               if (!window.__cmAutoAdvance) return;
               var before = cmSnapshot();
-              var how = cmTryAdvance();
-              // Confirm asynchronously: a container scroll settles
-              // immediately, but a synthetic ArrowDown only lands once the
-              // site's own handler runs.
-              setTimeout(function() {
-                // Correct after the feed has settled (lazy-loaded media and
-                // scroll-snap both change an item's box after the scroll), and
-                // report the correction so drift is visible in the log rather
-                // than only on screen.
-                var off = cmRecenter();
-                var drift = Math.abs(off) > 2 ? ' recentered ' + Math.round(off) + 'px' : '';
-                if (cmSnapshot() !== before) cmNotify('advance', how + drift);
-                else cmNotify('advance-failed', how + drift);
-              }, 900);
+              var mechs = cmMechanisms();
+
+              // Walk the mechanisms until one demonstrably moves the feed.
+              // Confirmation is what makes the fallback possible at all: a
+              // mechanism that runs without error still has to be checked, and
+              // only then can we decide to try the next one.
+              function attempt(i) {
+                if (i >= mechs.length) {
+                  cmNotify('advance-failed', 'exhausted all ' + mechs.length + ' mechanisms');
+                  return;
+                }
+                var m = mechs[i];
+                var ran = false;
+                try { ran = m.run(); } catch (e) { cmNotify('error', m.name + ': ' + (e && e.message ? e.message : e)); }
+                if (!ran) { attempt(i + 1); return; }
+
+                // Two checks per mechanism: a scroll settles at once, but an
+                // SPA (YouTube) animates the transition and reattaches its
+                // player, which routinely needs more than a second. A single
+                // early check called a working advance a failure.
+                function confirm(waitMs, isLast) {
+                  setTimeout(function() {
+                    try {
+                    // Correct after the feed settles — lazy-loaded media and
+                    // scroll-snap both change an item's box afterwards — and
+                    // report the correction so drift shows up in the log
+                    // rather than only on screen.
+                    var off = cmRecenter();
+                    var drift = Math.abs(off) > 2 ? ' recentered ' + Math.round(off) + 'px' : '';
+                    if (cmSnapshot() !== before) {
+                      window.__cmLastAdvanceOkAt = Date.now();
+                      cmNotify('advance', m.name + (isLast ? ' (slow)' : '') + drift);
+                    } else if (isLast) {
+                      attempt(i + 1);
+                    } else {
+                      confirm(1600, true);
+                    }
+                    } catch (e) { cmNotify('error', 'confirm: ' + (e && e.message ? e.message : e)); }
+                  }, waitMs);
+                }
+                confirm(900, false);
+              }
+              attempt(0);
             }, delay);
           }
 
@@ -281,7 +336,17 @@ enum ScrollFeedScript {
             var src = v.currentSrc || v.src || '';
             if (window.__cmPlaySrc !== src) { window.__cmPlaySrc = src; window.__cmPlayTries = 0; }
             if (!v.paused) return;
-            if ((window.__cmPlayTries || 0) >= 3) return;
+            // An item still at zero never started — that is the site or WebKit
+            // refusing autoplay, not the user pausing, so keep trying. Once it
+            // has actually played, a pause is the user's and three nudges is
+            // already generous. Spaced out either way: play() rejects with
+            // AbortError when called again while the previous one is settling.
+            var neverStarted = (v.currentTime || 0) < 0.5;
+            var limit = neverStarted ? 15 : 3;
+            var now = Date.now();
+            if (now - (window.__cmPlayTriedAt || 0) < 2000) return;
+            if ((window.__cmPlayTries || 0) >= limit) return;
+            window.__cmPlayTriedAt = now;
             window.__cmPlayTries = (window.__cmPlayTries || 0) + 1;
             try {
               var p = v.play();
@@ -306,7 +371,11 @@ enum ScrollFeedScript {
             var now = Date.now();
             // A channel that is advancing is self-evidently healthy, and its
             // advances already say so — only report while apparently stuck.
-            if (window.__cmLastAdvanceAt && now - window.__cmLastAdvanceAt < CM_HEARTBEAT_MS * 2) return;
+            // Keyed on the last *successful* advance, not the last attempt: a
+            // channel retrying and failing every few seconds would otherwise
+            // suppress its own heartbeat forever and go completely silent,
+            // which is precisely when its diagnostics are wanted.
+            if (window.__cmLastAdvanceOkAt && now - window.__cmLastAdvanceOkAt < CM_HEARTBEAT_MS * 2) return;
             if (window.__cmLastBeatAt && now - window.__cmLastBeatAt < CM_HEARTBEAT_MS) return;
             window.__cmLastBeatAt = now;
             var all = document.querySelectorAll('video').length;
@@ -344,6 +413,7 @@ enum ScrollFeedScript {
           });
 
           setInterval(() => {
+            try {
             const v = cmCurrentVideo();
             if (!window.__cmHidden && window.__cmAutoAdvance) cmHeartbeat(v);
             if (!v) return;
@@ -359,8 +429,26 @@ enum ScrollFeedScript {
             v.loop = false;
             if (!v.__cmHooked) { v.__cmHooked = true; v.addEventListener('ended', advance); }
             if (v.duration && isFinite(v.duration)) {
-              if (v.currentTime > v.duration - 0.35 && !v.__cmFired) { v.__cmFired = true; advance(); }
+              var atEnd = v.currentTime > v.duration - 0.35;
+              if (atEnd && !v.__cmFired) { v.__cmFired = true; advance(); }
               else if (v.currentTime < 1) { v.__cmFired = false; }
+              // If every mechanism failed, the item sits at its last frame and
+              // __cmFired keeps it there forever — the channel dies silently
+              // (observed on Shorts: t=59.0/59.0 for minutes). Re-arm after a
+              // while so it keeps trying; the site may just have been mid-
+              // transition, and a stalled feed is worse than a retry.
+              else if (atEnd && v.__cmFired
+                       && Date.now() - (window.__cmLastAdvanceAt || 0) > CM_STUCK_RETRY_MS) {
+                v.__cmFired = false;
+              }
+            }
+            } catch (e) {
+              // A throw here would otherwise kill every tick in silence, which
+              // looks exactly like a healthy idle channel.
+              if (!window.__cmErrAt || Date.now() - window.__cmErrAt > 10000) {
+                window.__cmErrAt = Date.now();
+                cmNotify('error', 'poll: ' + (e && e.message ? e.message : e));
+              }
             }
           }, 500);
         })();

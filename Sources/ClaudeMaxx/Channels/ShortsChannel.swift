@@ -12,79 +12,26 @@ final class ShortsChannel: ContentChannel {
     let preferredAspect = NSSize(width: 9, height: 16)
     let supportsAutoAdvance = true
 
-    /// Injected at `.atDocumentEnd` (SPEC §8.1). Implements the watch-complete
-    /// auto-advance pattern from §8.2: a 500 ms poll re-acquires the active
-    /// `<video>` element (YouTube's SPA recycles player nodes on scroll),
-    /// hooks `ended` (after forcing `loop = false` so it actually fires),
-    /// with a currentTime-based fallback for players that re-loop before
-    /// `ended` dispatches. All `window.__cm*` globals are namespaced per
-    /// the repo-wide convention so multiple channel scripts can never clash.
-    ///
-    /// `advance()` applies the required timing jitter (§8.2 "Timing jitter"):
-    /// skip entirely with ~1/12 probability, else fire the click after a
-    /// uniform random 0.8–3.0 s delay — never synchronously on `ended`, since
-    /// a metronome-perfect click is the one remaining machine-legible
-    /// signature once synthetic input is off the table. A successful click
-    /// is reported through the `cm` WKScriptMessageHandler so the native side
-    /// can append a StatsStore `advance` event (§9.2); the `try/catch` around
-    /// the postMessage call makes the script safe to run before that handler
-    /// is registered.
+    /// Shares `ScrollFeedScript` with Reels and TikTok, passing YouTube's own
+    /// next-video controls. Clicking the site's real control is better than
+    /// scrolling — it advances exactly one item — and everything around it
+    /// (watch-complete detection, timing jitter, the `cm` bridge) is identical
+    /// across the three, so it is not worth a second copy of the script. This
+    /// channel used to carry one, which is how it kept `querySelector('video')`
+    /// (the first video in the DOM, not the one on screen) and missed the
+    /// centering, resize handling, and idle diagnostics the others gained.
     func userScript() -> WKUserScript {
-        let source = """
-        (function() {
-          if (window.__cmInstalled) return;
-          window.__cmInstalled = true;
-          window.__cmAutoAdvance = true;              // native toggles this flag
-
-          var CM_MIN_DELAY_MS = 800;
-          var CM_MAX_DELAY_MS = 3000;
-          var CM_SKIP_PROBABILITY = 1 / 12;
-
-          function cmClickNext() {
-            var primary = document.querySelector('#navigation-button-down button');
-            if (primary) { primary.click(); return true; }
-            var fallback = document.querySelector('button[aria-label="Next video"]');
-            if (fallback) { fallback.click(); return true; }
-            return false;
-          }
-
-          function cmNotifyAdvance() {
-            try {
-              window.webkit.messageHandlers.cm.postMessage({ event: 'advance', channel: 'shorts' });
-            } catch (e) {
-              // messageHandler not installed yet (or webkit bridge unavailable) — safe no-op.
-            }
-          }
-
-          function advance() {
-            if (!window.__cmAutoAdvance) return;
-            if (Math.random() < CM_SKIP_PROBABILITY) return;   // let it sit; not every completion advances
-            var delay = CM_MIN_DELAY_MS + Math.random() * (CM_MAX_DELAY_MS - CM_MIN_DELAY_MS);
-            setTimeout(function() {
-              if (!window.__cmAutoAdvance) return;              // re-check: flag may have flipped during the delay
-              if (cmClickNext()) cmNotifyAdvance();
-            }, delay);
-          }
-
-          setInterval(() => {
-            const v = document.querySelector('video');  // active video is first/only match
-            if (!v) return;
-            // __cmHidden: native sets this on window hide (and clears it on
-            // show) — force-pause anything that starts while hidden, since a
-            // one-shot pause() before hide can race a still-loading page.
-            if (window.__cmHidden) { if (!v.paused) v.pause(); return; }
-            if (!window.__cmAutoAdvance) return;
-            v.loop = false;                             // make `ended` fire
-            if (!v.__cmHooked) { v.__cmHooked = true; v.addEventListener('ended', advance); }
-            // Fallback: players that re-loop programmatically before `ended`
-            if (v.duration && isFinite(v.duration)) {
-              if (v.currentTime > v.duration - 0.35 && !v.__cmFired) { v.__cmFired = true; advance(); }
-              else if (v.currentTime < 1) { v.__cmFired = false; }
-            }
-          }, 500);
-        })();
-        """
-        return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        WKUserScript(
+            source: ScrollFeedScript.source(
+                channelID: id,
+                nextSelectors: [
+                    "#navigation-button-down button",
+                    "button[aria-label=\"Next video\"]",
+                ]
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
     }
 
     /// Native-side flag flip (§8.2) — no reload, so pause→show on the same

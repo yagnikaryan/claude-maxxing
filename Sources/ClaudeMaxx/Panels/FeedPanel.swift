@@ -458,6 +458,17 @@ extension FeedPanel: WKNavigationDelegate {
         cmLog("nav START\(webView === self.webView ? "" : " (popup)") -> \(webView.url?.absoluteString ?? "nil")")
     }
 
+    /// The web content process can die on its own (memory pressure, a site
+    /// bug), leaving a blank window and a page that runs no JavaScript at all
+    /// — indistinguishable from a healthy idle channel, since a dead page
+    /// cannot report anything. Say so, and reload the channel so the window
+    /// recovers instead of sitting blank until someone notices.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        cmLog("webview content process terminated — reloading \(activeChannel?.id ?? "no channel")")
+        guard let channel = activeChannel else { return }
+        webView.load(URLRequest(url: channel.url))
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         cmLog("nav FINISH\(webView === self.webView ? "" : " (popup)") -> \(webView.url?.absoluteString ?? "nil")")
         // Channel playback flags belong only to the feed. A popup is a login

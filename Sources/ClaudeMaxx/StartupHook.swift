@@ -26,16 +26,36 @@ enum StartupHook {
         scriptURL(forBinaryAt: URL(fileURLWithPath: CommandLine.arguments[0]))
     }
 
-    /// Split out so the path arithmetic is asserted directly: it depends on
-    /// the binary sitting exactly three levels below the repo root
-    /// (`.build/<config>/ClaudeMaxx`), which is easy to break silently.
+    /// Searches upward for the script rather than assuming a fixed depth.
+    ///
+    /// Counting parent directories looked fine and was wrong: SwiftPM makes
+    /// `.build/release` a symlink to `.build/<triple>/release`, so resolving
+    /// it yields a path one level deeper than a debug build and a fixed walk
+    /// landed on `.build/scripts/…`. That silently disabled the whole toggle
+    /// in release builds — the layout the installer produces — while unit
+    /// tests over literal paths still passed.
+    ///
+    /// Falls back to the unresolved path when the search comes up empty, so a
+    /// missing script still produces a sensible name in the log.
     static func scriptURL(forBinaryAt binary: URL) -> URL {
-        binary
-            .resolvingSymlinksInPath()
-            .deletingLastPathComponent()   // .build/<config>
-            .deletingLastPathComponent()   // .build
-            .deletingLastPathComponent()   // repo root
-            .appendingPathComponent("scripts/claude-maxx-hook.sh")
+        let relative = "scripts/claude-maxx-hook.sh"
+        var directory = binary.resolvingSymlinksInPath().deletingLastPathComponent()
+
+        // Deep enough for `.build/<triple>/<config>/` and then some; bounded
+        // so a binary outside a clone can't walk to the filesystem root.
+        for _ in 0..<6 {
+            let candidate = directory.appendingPathComponent(relative)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            let parent = directory.deletingLastPathComponent()
+            if parent == directory { break }   // reached /
+            directory = parent
+        }
+
+        return binary
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(relative)
     }
 
     /// Queried live on every menu open rather than cached, so editing
