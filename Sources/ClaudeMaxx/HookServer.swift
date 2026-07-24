@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 
@@ -38,11 +39,30 @@ final class Router {
     private let settings: SettingsStore
     private let stats: StatsStore
     private let orchestrator: Orchestrator
+    private let terminate: () -> Void
 
-    init(settings: SettingsStore = .shared, stats: StatsStore = .shared, orchestrator: Orchestrator? = nil) {
+    /// `terminate` is injectable so tests can exercise the `quit` grammar
+    /// without killing the test runner.
+    ///
+    /// The default defers the actual exit: `route(_:)` runs *before* the
+    /// response is written, so terminating synchronously would leave the
+    /// client with an empty body — and the wrapper reads "no response" as
+    /// "daemon isn't running" and starts a fresh one, so quit would silently
+    /// relaunch. Going through `NSApp.terminate` (rather than `exit`) also
+    /// runs `applicationWillTerminate`, which closes any open content episode
+    /// and records it.
+    init(
+        settings: SettingsStore = .shared,
+        stats: StatsStore = .shared,
+        orchestrator: Orchestrator? = nil,
+        terminate: @escaping () -> Void = {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
+        }
+    ) {
         self.settings = settings
         self.stats = stats
         self.orchestrator = orchestrator ?? Orchestrator(settings: settings, stats: stats)
+        self.terminate = terminate
     }
 
     func route(_ request: HTTPRequestLine) -> String {
@@ -179,6 +199,9 @@ final class Router {
             settings.autoAdvance = false
             orchestrator.refreshIfShowing()
             return "auto-advance off"
+        case "quit":
+            terminate()
+            return "stopping the daemon — /claude-maxx or scripts/restart.sh starts it again"
         case "hide", "done":
             let mode = settings.mode.rawValue
             orchestrator.commandOff()

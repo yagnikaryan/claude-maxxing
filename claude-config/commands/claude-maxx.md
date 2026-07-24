@@ -1,5 +1,5 @@
 ---
-description: Control Claude Maxx (off | ask | auto | now | setup | hide | scroll on | scroll off | stats | dashboard | status)
+description: Control Claude Maxx (off | ask | auto | now | setup | hide | quit | scroll on | scroll off | stats | dashboard | status)
 allowed-tools: Bash(__CM_CMD_PATH__:*)
 ---
 

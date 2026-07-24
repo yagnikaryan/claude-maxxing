@@ -75,6 +75,23 @@ final class HookServerTests: XCTestCase {
         )
     }
 
+    /// `quit` must answer before it exits. route(_:) runs before the response
+    /// is written, so terminating synchronously would hand the client an empty
+    /// body — and the wrapper reads "no response" as "daemon isn't running"
+    /// and launches a fresh one, making quit silently relaunch.
+    func testQuitAnswersBeforeTerminating() {
+        var terminated = false
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let stats = StatsStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jsonl"))
+        let router = Router(settings: settings, stats: stats, terminate: { terminated = true })
+
+        let response = router.route(HTTPRequestLine.parse("GET /cmd?arg=quit HTTP/1.1")!)
+
+        XCTAssertTrue(response.hasPrefix("stopping the daemon"), "got: \(response)")
+        XCTAssertTrue(terminated, "quit must actually request termination")
+    }
+
     func testCmdModeGrammar() {
         let router = makeRouter()
 

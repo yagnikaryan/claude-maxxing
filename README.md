@@ -69,6 +69,7 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx now` | open window immediately | `opening window` |
 | `/claude-maxx setup` | open window immediately, for first-run login | numbered setup walkthrough (see below) |
 | `/claude-maxx hide` (or `done`) | close the window, keep the current mode | `window hidden — mode stays ask` |
+| `/claude-maxx quit` | stop the daemon process entirely | `stopping the daemon — …` |
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance on the video channels (applies live if the window is open; X/Reading have no auto behavior) | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line (waits, content/waiting minutes, chip opt-in, videos completed) |
 | `/claude-maxx dashboard` | open the stats dashboard in its own native floating panel | `opening stats dashboard` |
@@ -128,8 +129,8 @@ not running until something starts it. Three ways, in the order you'll actually 
 | `/claude-maxx <anything>` | starts it on demand — the wrapper launches the binary, waits, and re-sends your subcommand, so the first command of the day both starts the daemon and answers. |
 | `./scripts/restart.sh` | starts it, or restarts it onto a newly built binary. |
 
-To stop it: **Quit Claude Maxx** in the menu bar, or [`./scripts/stop.sh`](./scripts/stop.sh) when
-the menu isn't reachable. Both leave your hooks, logins, and stats alone — it starts again by any
+To stop it: `/claude-maxx quit`, **Quit Claude Maxx** in the menu bar, or
+[`./scripts/stop.sh`](./scripts/stop.sh). Both leave your hooks, logins, and stats alone — it starts again by any
 of the routes above.
 
 **"Fully off" means one of three different things**, so pick the one you want:
@@ -137,8 +138,8 @@ of the routes above.
 - **Stop showing content, keep everything running.** `/claude-maxx off`. The daemon stays up and
   keeps counting sessions; it just never opens a window or offers a chip. This is the reversible
   one — `/claude-maxx ask` brings it back.
-- **Stop the process too.** `./scripts/stop.sh` (or menu → Quit), *and* turn off "Start with Claude
-  Code" so a new session doesn't bring it back. Nothing then runs until you deliberately start it.
+- **Stop the process too.** `/claude-maxx quit` (or `./scripts/stop.sh`, or menu → Quit), *and* turn
+  off "Start with Claude Code" so a new session doesn't bring it back. Nothing then runs until you deliberately start it.
 - **Remove it from this machine.** [`./scripts/uninstall.sh`](./scripts/uninstall.sh) — deletes the
   slash command and strips the hooks, leaving your stats, logins, and settings in place. Then
   delete the clone.
