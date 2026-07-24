@@ -25,6 +25,7 @@ enum ScrollFeedScript {
           var CM_MAX_DELAY_MS = 3000;
           var CM_SKIP_PROBABILITY = 1 / 12;
           var CM_ADVANCE_COOLDOWN_MS = 2500;
+          var CM_HEARTBEAT_MS = 30000;
 
           // These feeds scroll an inner container, not the document, so
           // window.scrollBy moves nothing and window.scrollY never changes —
@@ -133,9 +134,58 @@ enum ScrollFeedScript {
             }, delay);
           }
 
+          // A feed that never starts playing never ends, so the
+          // watch-complete check never runs and the channel simply sits
+          // there. Nudge a paused video back into playback and report the
+          // rejection if the site or WebKit refuses — `play()` rejects with a
+          // named error, which is the only way to tell an autoplay block from
+          // a site that paused itself.
+          //
+          // Bounded, and reset per item: a user who deliberately pauses gets
+          // to keep it paused after a few attempts rather than fighting us.
+          function cmEnsurePlaying(v) {
+            var src = v.currentSrc || v.src || '';
+            if (window.__cmPlaySrc !== src) { window.__cmPlaySrc = src; window.__cmPlayTries = 0; }
+            if (!v.paused) return;
+            if ((window.__cmPlayTries || 0) >= 3) return;
+            window.__cmPlayTries = (window.__cmPlayTries || 0) + 1;
+            try {
+              var p = v.play();
+              if (p && p.catch) {
+                p.catch(function(e) {
+                  cmNotify('play-blocked', (e && e.name ? e.name : 'Error') + ': ' + (e && e.message ? e.message : '')
+                    + ' | visibility=' + document.visibilityState + ' focus=' + document.hasFocus());
+                });
+              }
+            } catch (e) {
+              cmNotify('play-blocked', 'threw ' + (e && e.message ? e.message : ''));
+            }
+          }
+
+          // A channel that never advances otherwise says nothing at all —
+          // no 'advance', no 'advance-failed', because the completion check
+          // itself never runs. Report why while idle: whether a video was
+          // found, whether it is playing, and how far in it is. Only while
+          // auto-advance is armed and the window is up, so a hidden or
+          // disabled channel stays quiet.
+          function cmHeartbeat(v) {
+            var now = Date.now();
+            // A channel that is advancing is self-evidently healthy, and its
+            // advances already say so — only report while apparently stuck.
+            if (window.__cmLastAdvanceAt && now - window.__cmLastAdvanceAt < CM_HEARTBEAT_MS * 2) return;
+            if (window.__cmLastBeatAt && now - window.__cmLastBeatAt < CM_HEARTBEAT_MS) return;
+            window.__cmLastBeatAt = now;
+            var all = document.querySelectorAll('video').length;
+            if (!v) { cmNotify('idle', 'no video (' + all + ' in DOM)'); return; }
+            cmNotify('idle', all + ' videos, current ' + (v.paused ? 'paused' : 'playing')
+              + ' t=' + (v.currentTime || 0).toFixed(1) + '/' + (isFinite(v.duration) ? v.duration.toFixed(1) : '?'));
+          }
+
           setInterval(() => {
             const v = cmCurrentVideo();
+            if (!window.__cmHidden && window.__cmAutoAdvance) cmHeartbeat(v);
             if (!v) return;
+            if (!window.__cmHidden && window.__cmAutoAdvance) cmEnsurePlaying(v);
             // __cmHidden: native sets this on window hide (and clears it on
             // show) — force-pause anything that starts while hidden, since a
             // one-shot pause() before hide can race a still-loading page.

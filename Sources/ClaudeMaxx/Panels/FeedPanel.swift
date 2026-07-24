@@ -162,6 +162,16 @@ final class FeedPanel: NSPanel, FeedPresenting {
         // `applicationNameForUserAgent` appends the suffix to the genuine
         // WebKit UA, composing exactly what real Safari sends.
         configuration.applicationNameForUserAgent = "Version/18.5 Safari/605.1.15"
+        // WebKit otherwise requires a user gesture before a video may play,
+        // and nothing in this window ever supplies one — the whole point is
+        // that content plays on its own while Claude works. TikTok's player
+        // sat paused at t=0 forever because of this, which also starved the
+        // watch-complete check that drives auto-advance (a video that never
+        // plays never ends). Reels happened to be allowed under the default,
+        // which is what made this look like a TikTok-only scrolling bug.
+        // Safe against the "audio kept playing after the window closed"
+        // failure: hide() and the channels' __cmHidden poll still force-pause.
+        configuration.mediaTypesRequiringUserActionForPlayback = []
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         // Right-click → Inspect Element. Login flows fail in ways only the
         // inspector can explain (e.g. Instagram completes password+captcha
