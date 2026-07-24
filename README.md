@@ -16,30 +16,28 @@ refocuses, all without touching the mouse again.
 ## Quickstart
 
 ```bash
-git clone https://github.com/<you>/claude-maxx && cd claude-maxx
-swift build
-swift run
+git clone https://github.com/yagnikaryan/claude-maxxing && cd claude-maxxing
+./scripts/install.sh
 ```
 
-`scripts/install.sh` / `scripts/uninstall.sh` (SPEC §12, M3) will eventually automate the two
-one-time steps below and aren't in this repo yet — for now, do them by hand:
+Then restart Claude Code (or run `/hooks`) so it picks up the new hooks, and run
+`/claude-maxx setup` to sign into the platforms you want. That's the whole install.
 
-1. Merge [`hooks-settings.json`](./hooks-settings.json) into `~/.claude/settings.json` (or run
-   `/hooks` inside Claude Code afterward to confirm the four entries registered).
-2. Copy [`claude-config/commands/claude-maxx.md`](./claude-config/commands/claude-maxx.md) to
-   `~/.claude/commands/claude-maxx.md`, then **edit the two absolute paths inside it** to point at
-   your clone. The command runs [`scripts/claude-maxx-cmd.sh`](./scripts/claude-maxx-cmd.sh) rather
-   than a bare `curl`, and pre-approves exactly that path in `allowed-tools` so it never prompts
-   for permission. (Both paths are hardcoded until `install.sh` lands — there's no reliable way for
-   a slash command to locate the repo on its own.)
+`install.sh` builds the release binary, writes `~/.claude/commands/claude-maxx.md` with the paths
+pointing at *your* clone, merges this project's four hook entries into `~/.claude/settings.json`,
+and starts the daemon. It's safe to re-run — hooks are matched by their loopback URL, so a re-run
+replaces this project's entries and leaves every other hook you have alone, and `settings.json` is
+backed up to `settings.json.claude-maxx.bak` first. Requires `python3` (preinstalled on macOS) to
+edit that JSON safely.
 
-You don't need to start the daemon by hand: if `/claude-maxx` finds nothing listening on
-`127.0.0.1:8765`, the wrapper launches `.build/debug/ClaudeMaxx`, waits for it, and re-sends your
-subcommand — so the first `/claude-maxx status` of the day both starts the daemon and answers.
-It only reports `daemon not running` if no built binary exists, which `swift build` fixes.
+There's no `.app`, no installer package, and nothing signed to trust — the daemon is a plain binary
+inside your clone, started from there. [`scripts/uninstall.sh`](./scripts/uninstall.sh) is the
+exact inverse and leaves your stats, logins, and settings in place.
 
-Signed, notarized `.app` packaging and a Homebrew cask are also M3 — until then, `swift build` (or
-`swift run` to watch it in the foreground) is how you get that binary.
+**Running the daemon by hand** isn't necessary: `/claude-maxx` starts it on demand. If nothing is
+listening on `127.0.0.1:8765`, the wrapper launches the binary from your clone, waits for it, and
+re-sends your subcommand — so the first `/claude-maxx status` of the day both starts the daemon and
+answers. During development, `swift run` in the foreground works too.
 
 ## `/claude-maxx` command
 
@@ -133,17 +131,21 @@ do with those signals (mode, channel, one-off "show now"). Both terminate at the
 loopback-only HTTP server (`HookServer` → `Router` → `Orchestrator`), so there's one source of
 truth and neither wire needs to know the other exists.
 
-## Manual uninstall
+## Uninstall
 
-`scripts/uninstall.sh` doesn't exist yet (M3); to remove Claude Maxx's hooks by hand:
+```bash
+./scripts/uninstall.sh
+```
 
-1. In `~/.claude/settings.json`, remove the four hook entries whose `command` contains
-   `127.0.0.1:8765` (`UserPromptSubmit`, `Stop`, `SessionEnd`, `Notification`), leaving any other
-   hooks you have untouched.
-2. Delete `~/.claude/commands/claude-maxx.md`.
+Stops the daemon, deletes `~/.claude/commands/claude-maxx.md`, and strips the four hook entries
+whose `command` contains `127.0.0.1:8765` from `~/.claude/settings.json` — leaving any other hooks
+you have untouched, with a backup alongside. Then delete the clone whenever you like.
 
-Stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`) and settings are left in place —
-nothing here deletes your data.
+Your data is deliberately left in place, so a reinstall picks up where you left off. The script
+prints all four locations on exit: stats (`~/Library/Application Support/ClaudeMaxx/stats.jsonl`),
+logins (`~/Library/HTTPStorages/ClaudeMaxx.binarycookies`, `~/Library/WebKit/ClaudeMaxx`), settings
+(`defaults delete ClaudeMaxx`), and logs (`~/Library/Logs/ClaudeMaxx.log`). If you turned on
+"Launch at Login", switch it off in System Settings → General → Login Items & Extensions.
 
 ## FAQ
 
@@ -226,9 +228,11 @@ clean rebuild may need a re-toggle.
 ## Trust posture
 
 Loopback-only bind; no prompt text, transcript, or cwd ever reaches the daemon; stats never leave
-the machine. Manual setup (until `scripts/install.sh` lands) touches exactly two paths under
-`~/.claude/`: it merges hook entries into `settings.json` and adds one file at
-`commands/claude-maxx.md`. Nothing else in `~/.claude/` is read or written.
+the machine. `install.sh` touches exactly two paths under `~/.claude/`: it merges hook entries into
+`settings.json` (backed up first, other hooks preserved) and writes one file at
+`commands/claude-maxx.md`. Nothing else in `~/.claude/` is read or written, nothing is installed
+outside your clone, and `uninstall.sh` reverses both. Read the two scripts before running them —
+they're short, and you should not run an installer you haven't looked at.
 
 ## Development
 
@@ -249,5 +253,6 @@ Safari → Settings → Advanced → "Show features for web developers", then Sa
 **ClaudeMaxx** → the page. There is no right-click "Inspect Element" inside the window itself.
 
 See `SPEC.md` for the full technical architecture, state machine, and build plan. This repo is
-mid-way through the plan's **M2 → M3** milestones (channels/chip picker done; daily cap and
-`install.sh`/`uninstall.sh`/packaging still ahead).
+mid-way through the plan's **M2 → M3** milestones (channels/chip picker and
+`install.sh`/`uninstall.sh` done; the daily cap still ahead). Signed `.app` packaging and a
+Homebrew cask are deliberately *not* planned — this is a clone-and-run project.
