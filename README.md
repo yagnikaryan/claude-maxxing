@@ -41,16 +41,23 @@ There's no `.app`, no installer package, and nothing signed to trust — the dae
 inside your clone, started from there. [`scripts/uninstall.sh`](./scripts/uninstall.sh) is the
 exact inverse and leaves your stats, logins, and settings in place.
 
-**You never start the daemon by hand.** A `SessionStart` hook starts it whenever you open Claude
-Code, so its lifetime matches the only thing it reacts to. If it somehow isn't running,
-`/claude-maxx` also starts it on demand: the wrapper launches the binary from your clone, waits,
-and re-sends your subcommand, so the first `/claude-maxx status` of the day both starts the daemon
-and answers. During development, `swift run` in the foreground works too.
+**Two ways to run it, both supported.** Pick by how much you want it around:
 
-That hook is a toggle, not a fixture: the menu bar's **"Start with Claude Code"** item adds or
-removes it, and the checkbox reflects what is actually in `settings.json`. Turn it off and you
-start the daemon yourself — `/claude-maxx` still does that on demand. Because a running Claude Code
-session reads its hooks at startup, a change takes effect from the *next* session.
+- **Always on.** Leave **"Start with Claude Code"** enabled (menu bar item, or
+  `scripts/claude-maxx-hook.sh enable`). A `SessionStart` hook starts the daemon whenever you open
+  Claude Code, so its lifetime matches the only thing it reacts to and you never think about it.
+- **On demand.** Turn that toggle off and nothing runs until you ask — no daemon, no menu bar icon,
+  nothing in the background after a reboot. When you want it, the mode command *is* the start
+  command: `/claude-maxx ask` starts the daemon and sets the mode in one step, because the wrapper
+  launches the binary first whenever nothing answers. `/claude-maxx quit` puts it away again.
+
+The one thing to know about on-demand: with the daemon down there's no menu bar icon, so the GUI
+routes (Show Window Now, the channel picker, the Reading list) aren't reachable until you've
+started it with a command or [`scripts/start.sh`](./scripts/start.sh).
+
+The checkbox reflects what is actually in `settings.json`, and because a running Claude Code
+session reads its hooks at startup, a change takes effect from the *next* session. During
+development, `swift run` in the foreground works too.
 
 There is deliberately no "Launch at Login". With no packaged `.app` there's no bundle identity for
 macOS to register, so a login item records the path of whatever binary was running and goes stale
