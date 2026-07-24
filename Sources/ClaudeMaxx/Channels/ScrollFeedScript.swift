@@ -79,12 +79,140 @@ enum ScrollFeedScript {
             return (v && (v.currentSrc || v.src)) || location.href;
           }
 
+          // The feed item holding this video: the ancestor that is a direct
+          // child of the scroller, i.e. the thing one "reel" of scrolling is
+          // supposed to move by.
+          function cmItemFor(v, container) {
+            if (!v || !container) return null;
+            var node = v;
+            var root = (container === document.scrollingElement || container === document.documentElement)
+              ? document.body : container;
+            while (node && node.parentElement && node.parentElement !== root) node = node.parentElement;
+            return (node && node.parentElement === root) ? node : null;
+          }
+
+          // The viewport an item should be centered in — the scroller's own
+          // box, or the window when the document is what scrolls.
+          function cmViewport(container) {
+            if (!container || container === document.scrollingElement || container === document.documentElement) {
+              return { top: 0, bottom: window.innerHeight };
+            }
+            var r = container.getBoundingClientRect();
+            return { top: r.top, bottom: r.bottom };
+          }
+
+          // How far `el` sits from centered, in pixels (positive = too low).
+          function cmCenterOffset(el, container) {
+            var r = el.getBoundingClientRect();
+            var vp = cmViewport(container);
+            return ((r.top + r.bottom) / 2) - ((vp.top + vp.bottom) / 2);
+          }
+
+          function cmScrollByPx(container, delta) {
+            if (!container || container === document.scrollingElement || container === document.documentElement) {
+              window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+            } else {
+              container.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+            }
+          }
+
+          // These feeds set `scroll-snap-type: y mandatory` with items aligned
+          // to `start`, so the browser pins each item's top edge to the top of
+          // the scroller. With an item shorter than the viewport that leaves
+          // all the slack at the bottom and the reel rides high; worse, any
+          // scroll of ours that lands between snap points gets yanked to the
+          // nearest one, so correcting the position by scrolling alone just
+          // fights the browser.
+          //
+          // Re-aligning the snap points themselves is the fix: the browser
+          // then centers each item natively, and our advance agrees with it
+          // instead of competing. Items taller than the viewport keep `start`
+          // — centering those would clip the top, which is the very thing this
+          // is meant to prevent, and clipping the bottom is the lesser evil.
+          function cmAlignItems(container) {
+            if (!container) return;
+            var vp = cmViewport(container);
+            var vpH = vp.bottom - vp.top;
+            if (vpH <= 0) return;
+            var kids = container.children;
+            for (var i = 0; i < kids.length; i++) {
+              var k = kids[i];
+              var h = k.getBoundingClientRect().height;
+              if (!h) continue;
+              var want = h <= vpH ? 'center' : 'start';
+              if (k.style.scrollSnapAlign !== want) k.style.scrollSnapAlign = want;
+            }
+            // Changing where the snap points *are* doesn't move the page: a
+            // freshly loaded feed keeps the scroll offset the site chose under
+            // its own top-alignment, so the first reel rides high until
+            // something scrolls. Correct once per page, after layout settles.
+            // Deliberately not repeated for later items — the browser snaps
+            // those into place on its own now, and re-running would yank the
+            // page while the user is scrolling by hand.
+            if (!window.__cmAlignedOnce) {
+              window.__cmAlignedOnce = true;
+              setTimeout(function() {
+                if (window.__cmHidden) return;
+                var off = cmRecenter();
+                if (Math.abs(off) > 2) cmNotify('align', 'recentered ' + Math.round(off) + 'px');
+              }, 600);
+            }
+          }
+
+          // Nudge whatever is on screen back to centered. Scrolling by the
+          // container's height assumes an item is exactly one viewport tall;
+          // it is not, so each advance left the reel a little further off and
+          // the top edge ended up cut. Called only right after our own
+          // advance — never on a timer, which would fight the user's own
+          // scrolling.
+          // Where an item *should* sit: centered when it fits, top-aligned
+          // when it is taller than the viewport. Same rule as cmAlignItems, so
+          // scrolling and snapping never disagree about the target.
+          function cmDesiredOffset(item, container) {
+            var vp = cmViewport(container);
+            var vpH = vp.bottom - vp.top;
+            var r = item.getBoundingClientRect();
+            if (r.height > vpH) return r.top - vp.top;   // never clip the top
+            return cmCenterOffset(item, container);
+          }
+
+          function cmRecenter() {
+            var v = cmCurrentVideo();
+            var container = v ? cmScrollable(v) : null;
+            var item = cmItemFor(v, container) || v;
+            if (!item || !container) return 0;
+            var off = cmDesiredOffset(item, container);
+            if (Math.abs(off) > 2) cmScrollByPx(container, off);
+            return off;
+          }
+
           // Tried in order of directness; returns a label for the log so a
-          // failing channel says which mechanisms it exhausted.
+          // failing channel says which mechanisms it exhausted. Prefers moving
+          // to the *next item* and centering it, rather than scrolling a fixed
+          // distance and hoping it lines up with a snap point.
           function cmTryAdvance() {
             var v = cmCurrentVideo();
             var container = v ? cmScrollable(v) : null;
             if (container) {
+              var item = cmItemFor(v, container);
+              var next = item && item.nextElementSibling;
+              if (next) {
+                // Must use the same rule as cmAlignItems/cmRecenter. Centering
+                // an item taller than the viewport contradicts its `start`
+                // snap alignment, and the correction afterwards scrolled a
+                // full viewport back — undoing the advance entirely, which
+                // showed up as advance-failed in a short window.
+                var delta = cmDesiredOffset(next, container);
+                var beforeNext = container.scrollTop;
+                cmScrollByPx(container, delta);
+                if (Math.abs(container.scrollTop - beforeNext) > 1) {
+                  var vp = cmViewport(container);
+                  var fits = next.getBoundingClientRect().height <= (vp.bottom - vp.top);
+                  return 'next-item ' + (fits ? 'centered' : 'top-aligned');
+                }
+              }
+              // No next sibling rendered yet (virtualized list) — fall back to
+              // a viewport-sized scroll, which cmRecenter then tidies up.
               var before = container.scrollTop;
               container.scrollBy({ top: container.clientHeight, left: 0, behavior: 'instant' });
               if (Math.abs(container.scrollTop - before) > 1) return 'container ' + cmDescribe(container);
@@ -128,8 +256,14 @@ enum ScrollFeedScript {
               // immediately, but a synthetic ArrowDown only lands once the
               // site's own handler runs.
               setTimeout(function() {
-                if (cmSnapshot() !== before) cmNotify('advance', how);
-                else cmNotify('advance-failed', how);
+                // Correct after the feed has settled (lazy-loaded media and
+                // scroll-snap both change an item's box after the scroll), and
+                // report the correction so drift is visible in the log rather
+                // than only on screen.
+                var off = cmRecenter();
+                var drift = Math.abs(off) > 2 ? ' recentered ' + Math.round(off) + 'px' : '';
+                if (cmSnapshot() !== before) cmNotify('advance', how + drift);
+                else cmNotify('advance-failed', how + drift);
               }, 900);
             }, delay);
           }
@@ -177,15 +311,46 @@ enum ScrollFeedScript {
             window.__cmLastBeatAt = now;
             var all = document.querySelectorAll('video').length;
             if (!v) { cmNotify('idle', 'no video (' + all + ' in DOM)'); return; }
+            // Centering offset in the same breath as playback state: without
+            // it, "is the reel cut off at the top?" can only be answered by
+            // looking at the screen, and only right after an advance.
+            var container = cmScrollable(v);
+            var item = cmItemFor(v, container) || v;
+            // Deviation from where the item *should* be, not from center, so
+            // 0 means correct for both centered and top-aligned items.
+            var off = container ? Math.round(cmDesiredOffset(item, container)) : 0;
             cmNotify('idle', all + ' videos, current ' + (v.paused ? 'paused' : 'playing')
-              + ' t=' + (v.currentTime || 0).toFixed(1) + '/' + (isFinite(v.duration) ? v.duration.toFixed(1) : '?'));
+              + ' t=' + (v.currentTime || 0).toFixed(1) + '/' + (isFinite(v.duration) ? v.duration.toFixed(1) : '?')
+              + ' off=' + (off > 0 ? '+' : '') + off + 'px');
           }
+
+          // Resizing the window (or moving it to a display that forces a
+          // re-clamp) changes the viewport height, which changes both where an
+          // item should sit and whether it still fits at all. The 500ms poll
+          // re-applies snap alignment on its own, but the *scroll position*
+          // stays where it was, leaving the reel off-center until the next
+          // advance. Correct it here instead, debounced so a live drag-resize
+          // settles once rather than fighting the pointer.
+          window.addEventListener('resize', function() {
+            clearTimeout(window.__cmResizeTimer);
+            window.__cmResizeTimer = setTimeout(function() {
+              if (window.__cmHidden) return;
+              var v = cmCurrentVideo();
+              var container = v ? cmScrollable(v) : null;
+              cmAlignItems(container);
+              var off = cmRecenter();
+              if (Math.abs(off) > 2) cmNotify('resize', 'recentered ' + Math.round(off) + 'px');
+            }, 250);
+          });
 
           setInterval(() => {
             const v = cmCurrentVideo();
             if (!window.__cmHidden && window.__cmAutoAdvance) cmHeartbeat(v);
             if (!v) return;
             if (!window.__cmHidden && window.__cmAutoAdvance) cmEnsurePlaying(v);
+            // Cheap and idempotent: the feed is virtualized, so items arriving
+            // during scroll need the same alignment as the ones already here.
+            if (!window.__cmHidden) cmAlignItems(cmScrollable(v));
             // __cmHidden: native sets this on window hide (and clears it on
             // show) — force-pause anything that starts while hidden, since a
             // one-shot pause() before hide can race a still-loading page.
