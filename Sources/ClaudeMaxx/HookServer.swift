@@ -61,8 +61,26 @@ final class Router {
             return statusLine()
         case "/stats.json":
             return handleStatsJSON()
+        case "/dashboard":
+            // Raw events in, aggregation in the page (see StatsDashboard) —
+            // the server stays a dumb pipe over stats.jsonl.
+            return StatsDashboard.html(
+                events: stats.allEvents(),
+                channelNames: Dictionary(uniqueKeysWithValues: ChannelRegistry.all.map { ($0.id, $0.displayName) })
+            )
         default:
             return "unknown endpoint"
+        }
+    }
+
+    /// Kept beside `route(_:)` rather than folded into its return type so the
+    /// existing string-equality call sites (and tests) stay untouched — only
+    /// HookServer's response writer cares about the header.
+    static func contentType(forPath path: String) -> String {
+        switch path {
+        case "/dashboard": return "text/html; charset=utf-8"
+        case "/stats.json": return "application/json; charset=utf-8"
+        default: return "text/plain; charset=utf-8"
         }
     }
 
@@ -144,6 +162,12 @@ final class Router {
             return "window hidden — mode stays \(mode)"
         case "stats":
             return statsLine()
+        case "dashboard":
+            // Opens the native stats panel, not the content window — its own
+            // turn's wait is still suppressed above, so asking for stats
+            // never flashes feed content at you.
+            StatsPanel.present(stats: stats)
+            return "opening stats dashboard"
         case "status", "":
             return statusLine()
         default:
@@ -177,7 +201,7 @@ final class Router {
         let daily = stats.dailyStats(for: Date())
         let contentMinutes = Int(daily.contentSeconds / 60)
         let waitMinutes = Int(daily.waitSeconds / 60)
-        return "today: \(daily.waits) waits, \(contentMinutes)m content / \(waitMinutes)m waiting, \(daily.chipWatch)/\(daily.chipOffered) watched, \(daily.videosCompleted) videos"
+        return "today: \(daily.waits) waits, \(contentMinutes)m content / \(waitMinutes)m waiting, \(daily.chipWatch)/\(daily.chipOffered) watched, \(daily.videosCompleted) videos — /claude-maxx dashboard for the full picture"
     }
 }
 
@@ -268,21 +292,24 @@ final class HookServer {
 
     private func respond(to requestLine: String, on connection: NWConnection) {
         let body: String
+        let contentType: String
         if let request = HTTPRequestLine.parse(requestLine) {
             body = router.route(request)
+            contentType = Router.contentType(forPath: request.path)
         } else {
             body = "unknown endpoint"
+            contentType = "text/plain; charset=utf-8"
         }
 
-        let response = Self.httpResponse(body: body)
+        let response = Self.httpResponse(body: body, contentType: contentType)
         connection.send(content: response, completion: .contentProcessed { _ in
             connection.cancel()
         })
     }
 
-    private static func httpResponse(body: String) -> Data {
+    private static func httpResponse(body: String, contentType: String) -> Data {
         let bodyData = body.data(using: .utf8) ?? Data()
-        let header = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
+        let header = "HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
         var data = header.data(using: .utf8) ?? Data()
         data.append(bodyData)
         return data

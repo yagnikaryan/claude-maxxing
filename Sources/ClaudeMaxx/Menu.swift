@@ -56,6 +56,9 @@ final class Menu: NSObject, NSMenuDelegate {
         for item in statsItems() {
             menu.addItem(item)
         }
+        let dashboard = NSMenuItem(title: "Stats Dashboard…", action: #selector(openDashboard), keyEquivalent: "")
+        dashboard.target = self
+        menu.addItem(dashboard)
         menu.addItem(.separator())
 
         // First-run setup / debug entry point (§8.1, §14): opens the feed
@@ -161,6 +164,13 @@ final class Menu: NSObject, NSMenuDelegate {
 
     @objc private func showWindowNow() {
         orchestrator.showNow(openedBy: .menu)
+    }
+
+    /// Shows the dashboard in its own native floating panel (StatsPanel) —
+    /// no browser tab. The same page also stays served at
+    /// `http://127.0.0.1:8765/dashboard` for anyone who prefers a browser.
+    @objc private func openDashboard() {
+        StatsPanel.present(stats: stats)
     }
 
     /// Adds or removes the `SessionStart` hook that starts the daemon with

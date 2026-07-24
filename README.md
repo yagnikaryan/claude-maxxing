@@ -62,8 +62,9 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx now` | open window immediately | `opening window` |
 | `/claude-maxx setup` | open window immediately, for first-run login | numbered setup walkthrough (see below) |
 | `/claude-maxx hide` (or `done`) | close the window, keep the current mode | `window hidden — mode stays ask` |
-| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance (applies live if the window is open) | `auto-advance on/off` |
+| `/claude-maxx scroll on` / `scroll off` | toggle auto-advance on the video channels (applies live if the window is open; X/Reading have no auto behavior) | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line (waits, content/waiting minutes, chip opt-in, videos completed) |
+| `/claude-maxx dashboard` | open the stats dashboard in its own native floating panel | `opening stats dashboard` |
 | `/claude-maxx status` (or bare) | none | one-line state dump (`window=visible-pinned` = a setup/now window that ignores prompt endings) |
 
 Mode changes apply to the *next* prompt (custom slash commands can't act mid-turn — see SPEC
@@ -98,7 +99,7 @@ All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
 |---|---|---|
 | `cm.mode` | `ask` | `off` \| `ask` \| `auto` |
 | `cm.channel` | `shorts` | active `ContentChannel` id |
-| `cm.autoAdvance` | `true` | auto-advance to next video/article on completion |
+| `cm.autoAdvance` | `true` | auto-advance to the next video on completion (video channels only — X and Reading deliberately have no auto-scroll) |
 | `cm.showDelay` | `4.0` (s) | debounce before the chip/window appears |
 | `cm.dailyCapMinutes` | `0` (off) | daily content-time cap in minutes |
 | `cm.snapBack` | `true` | re-activate your previously-frontmost app on hide |
@@ -142,6 +143,31 @@ Hooks are the *signal wire* — they fire on every prompt unconditionally and re
 do with those signals (mode, channel, one-off "show now"). Both terminate at the same
 loopback-only HTTP server (`HookServer` → `Router` → `Orchestrator`), so there's one source of
 truth and neither wire needs to know the other exists.
+
+## Stats
+
+Every state transition appends one event to a local JSONL log
+(`~/Library/Application Support/ClaudeMaxx/stats.jsonl`): waits (a prompt running), content
+episodes (window open, with channel and how it opened/closed), chip offers/answers, confirmed
+video advances, and interrupts. Metrics are always derived from the raw events at read time —
+nothing pre-aggregates, so the numbers can't drift from the log.
+
+Three read surfaces, thinnest first:
+
+- `/claude-maxx stats` — one line, today only.
+- `GET http://127.0.0.1:8765/stats.json` — today's derived metrics as JSON.
+- **The dashboard** — `/claude-maxx dashboard`, or **Stats Dashboard…** in the menu bar. Opens a
+  native floating panel (no browser; the same page is also served at
+  `http://127.0.0.1:8765/dashboard`). Headline content-to-wait ratio, totals, an hour×day heatmap
+  of when content plays (switchable to a Mon–Sun weekly-pattern view, with empty hours collapsed
+  by default), content-vs-waiting by day, and the per-channel split — over a selectable 7/14/30-day
+  or all-time range. Every chart has a table twin, and the page is fully self-contained HTML:
+  no CDN, no external requests, regenerated from the log each time it opens.
+
+Definitions worth knowing: **waiting** counts only time a Claude prompt was actually running
+(`/start`→`/stop`); **content** counts time the window was open, which includes pinned
+setup/`now` windows that run outside any prompt — so a content:wait ratio above 1.0 means the
+window was open beyond prompt cycles, not that the math is wrong.
 
 ## Uninstall
 
