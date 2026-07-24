@@ -117,6 +117,32 @@ Two things worth knowing:
 There's deliberately no auto-advance here — reaching the end of a page isn't a request for a
 different one. You move between entries yourself.
 
+## Starting and stopping
+
+There is no login item and nothing registered with the OS, so after a reboot the daemon is simply
+not running until something starts it. Three ways, in the order you'll actually use them:
+
+| | |
+|---|---|
+| **Start with Claude Code** (menu bar toggle) | a `SessionStart` hook starts the daemon whenever you open Claude Code. This is the "never think about it" option, and takes effect from the *next* session. `scripts/claude-maxx-hook.sh enable\|disable\|status` is the same switch from a terminal. |
+| `/claude-maxx <anything>` | starts it on demand — the wrapper launches the binary, waits, and re-sends your subcommand, so the first command of the day both starts the daemon and answers. |
+| `./scripts/restart.sh` | starts it, or restarts it onto a newly built binary. |
+
+To stop it: **Quit Claude Maxx** in the menu bar, or [`./scripts/stop.sh`](./scripts/stop.sh) when
+the menu isn't reachable. Both leave your hooks, logins, and stats alone — it starts again by any
+of the routes above.
+
+**"Fully off" means one of three different things**, so pick the one you want:
+
+- **Stop showing content, keep everything running.** `/claude-maxx off`. The daemon stays up and
+  keeps counting sessions; it just never opens a window or offers a chip. This is the reversible
+  one — `/claude-maxx ask` brings it back.
+- **Stop the process too.** `./scripts/stop.sh` (or menu → Quit), *and* turn off "Start with Claude
+  Code" so a new session doesn't bring it back. Nothing then runs until you deliberately start it.
+- **Remove it from this machine.** [`./scripts/uninstall.sh`](./scripts/uninstall.sh) — deletes the
+  slash command and strips the hooks, leaving your stats, logins, and settings in place. Then
+  delete the clone.
+
 ## Config knobs
 
 All settings live in `UserDefaults` under the `cm.` prefix (`SettingsStore`):
