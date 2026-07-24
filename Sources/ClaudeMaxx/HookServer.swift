@@ -123,7 +123,17 @@ final class Router {
 
     // MARK: - /cmd grammar (§4.2)
 
+    /// Logs every command and the mode it left behind. `/start` and `/stop`
+    /// were traced but `/cmd` — the only request that changes settings — was
+    /// not, so "it said mode set to ask but the menu still says off" was
+    /// unanswerable: nothing recorded whether the request ever arrived.
     private func handleCmd(_ request: HTTPRequestLine) -> String {
+        let response = applyCmd(request)
+        cmLog("cmd arg=\(request.query["arg"] ?? "") → mode=\(settings.mode.rawValue)")
+        return response
+    }
+
+    private func applyCmd(_ request: HTTPRequestLine) -> String {
         // "+" → " ": form-style encoding of a space, which URLComponents
         // deliberately does not decode in query items — accepted here so a
         // hand-typed `curl "?arg=scroll+on"` behaves like the command file's
