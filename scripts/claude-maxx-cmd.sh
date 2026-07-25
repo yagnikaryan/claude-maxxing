@@ -9,6 +9,12 @@
 
 out=$(cm_send "$*") && [ -n "$out" ] && { printf '%s\n' "$out"; exit 0; }
 
+# Nothing answered. Every other subcommand wants the daemon started first, but
+# starting one in order to stop it is absurd — and worse, the `daemon started`
+# line printed below would read as though quit had done the opposite of what it
+# says. The requested state already holds, so say so and stop.
+[ "$*" = "quit" ] && { echo "not running — nothing to stop"; exit 0; }
+
 repo=$(cm_repo "$0")
 bin=$(cm_bin "$repo")
 [ -n "$bin" ] || {

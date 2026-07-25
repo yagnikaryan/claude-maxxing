@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 
@@ -30,6 +31,67 @@ struct HTTPRequestLine {
     }
 }
 
+// MARK: - Quit
+
+/// The exit path for `/cmd?arg=quit`, in two stages so that "stopping the
+/// daemon" is true by the time the caller reads it.
+///
+/// Stage 1 asks AppKit to terminate, which runs `applicationWillTerminate` and
+/// so closes and records any open content episode — the reason this does not
+/// simply call `exit`.
+///
+/// Stage 2 exists because `NSApp.terminate` is only a *request*:
+/// `applicationShouldTerminate` may defer it, and a modal run loop (`Menu`'s
+/// `NSAlert` / `NSOpenPanel`) or a busy main thread can swallow the queued
+/// call entirely. Observed in the field — the daemon answered "stopping the
+/// daemon", kept running, and logged no `applicationWillTerminate` at all.
+/// That is the worst shape this failure can take: the reply is the only thing
+/// a caller can check, and the wrapper cannot tell a surviving daemon from a
+/// stopped one. So the exit is guaranteed here rather than requested.
+///
+/// Extracted as a type, rather than inlined into the `quit` case, so the
+/// ordering is testable without the test runner living through a real exit.
+struct QuitTerminator {
+    /// Both stages wait this long first: `route(_:)` runs *before* the response
+    /// is written, and a client that gets an empty body is read by the wrapper
+    /// as "daemon isn't running" — which it answers by starting a fresh one, so
+    /// quit would silently relaunch.
+    var replyGrace: TimeInterval = 0.3
+    /// How long AppKit gets to honor stage 1 before stage 2 stops waiting.
+    var appKitGrace: TimeInterval = 1.0
+
+    let requestTermination: () -> Void
+    let forceExit: () -> Void
+
+    /// Injectable so tests observe the schedule instead of living through it.
+    /// Defaults to a global queue and never to main: a blocked or modal main
+    /// thread is precisely what stage 2 covers, so it must not queue behind it.
+    var after: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func schedule() {
+        after(replyGrace) { requestTermination() }
+        after(replyGrace + appKitGrace) { forceExit() }
+    }
+
+    /// The real daemon wiring. `beforeExit` is the graceful work that stage 1
+    /// would have done via `applicationWillTerminate` and that stage 2 has to
+    /// do by hand.
+    static func daemon(beforeExit: @escaping () -> Void = {}) -> QuitTerminator {
+        QuitTerminator(
+            // Hopped to main here rather than in `after`, because AppKit
+            // requires it and stage 2 deliberately runs off-main.
+            requestTermination: { DispatchQueue.main.async { NSApp.terminate(nil) } },
+            forceExit: {
+                cmLog("quit: AppKit did not terminate in time — exiting directly")
+                beforeExit()
+                exit(0)
+            }
+        )
+    }
+}
+
 // MARK: - Router
 
 /// Pure request → response text logic, independent of the network layer so
@@ -38,11 +100,22 @@ final class Router {
     private let settings: SettingsStore
     private let stats: StatsStore
     private let orchestrator: Orchestrator
+    private let terminate: () -> Void
 
-    init(settings: SettingsStore = .shared, stats: StatsStore = .shared, orchestrator: Orchestrator? = nil) {
+    /// `terminate` is injectable so tests can exercise the `quit` grammar
+    /// without killing the test runner. See `QuitTerminator` for why the
+    /// default is two-stage rather than a bare `NSApp.terminate`; the daemon
+    /// injects a variant that also records an open episode (see main.swift).
+    init(
+        settings: SettingsStore = .shared,
+        stats: StatsStore = .shared,
+        orchestrator: Orchestrator? = nil,
+        terminate: @escaping () -> Void = { QuitTerminator.daemon().schedule() }
+    ) {
         self.settings = settings
         self.stats = stats
         self.orchestrator = orchestrator ?? Orchestrator(settings: settings, stats: stats)
+        self.terminate = terminate
     }
 
     func route(_ request: HTTPRequestLine) -> String {
@@ -179,6 +252,14 @@ final class Router {
             settings.autoAdvance = false
             orchestrator.refreshIfShowing()
             return "auto-advance off"
+        case "quit":
+            // Logged because a quit that fails to take effect is otherwise
+            // invisible: the caller is told the daemon is stopping and the log
+            // shows nothing at all, so the report reads as contradicting the
+            // code. This line is the difference between the two.
+            cmLog("quit requested — scheduling termination")
+            terminate()
+            return "stopping the daemon — /claude-maxx or scripts/restart.sh starts it again"
         case "hide", "done":
             let mode = settings.mode.rawValue
             orchestrator.commandOff()

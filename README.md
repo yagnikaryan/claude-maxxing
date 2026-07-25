@@ -41,16 +41,23 @@ There's no `.app`, no installer package, and nothing signed to trust — the dae
 inside your clone, started from there. [`scripts/uninstall.sh`](./scripts/uninstall.sh) is the
 exact inverse and leaves your stats, logins, and settings in place.
 
-**You never start the daemon by hand.** A `SessionStart` hook starts it whenever you open Claude
-Code, so its lifetime matches the only thing it reacts to. If it somehow isn't running,
-`/claude-maxx` also starts it on demand: the wrapper launches the binary from your clone, waits,
-and re-sends your subcommand, so the first `/claude-maxx status` of the day both starts the daemon
-and answers. During development, `swift run` in the foreground works too.
+**Two ways to run it, both supported.** Pick by how much you want it around:
 
-That hook is a toggle, not a fixture: the menu bar's **"Start with Claude Code"** item adds or
-removes it, and the checkbox reflects what is actually in `settings.json`. Turn it off and you
-start the daemon yourself — `/claude-maxx` still does that on demand. Because a running Claude Code
-session reads its hooks at startup, a change takes effect from the *next* session.
+- **Always on.** Leave **"Start with Claude Code"** enabled (menu bar item, or
+  `scripts/claude-maxx-hook.sh enable`). A `SessionStart` hook starts the daemon whenever you open
+  Claude Code, so its lifetime matches the only thing it reacts to and you never think about it.
+- **On demand.** Turn that toggle off and nothing runs until you ask — no daemon, no menu bar icon,
+  nothing in the background after a reboot. When you want it, the mode command *is* the start
+  command: `/claude-maxx ask` starts the daemon and sets the mode in one step, because the wrapper
+  launches the binary first whenever nothing answers. `/claude-maxx quit` puts it away again.
+
+The one thing to know about on-demand: with the daemon down there's no menu bar icon, so the GUI
+routes (Show Window Now, the channel picker, the Reading list) aren't reachable until you've
+started it with a command or [`scripts/start.sh`](./scripts/start.sh).
+
+The checkbox reflects what is actually in `settings.json`, and because a running Claude Code
+session reads its hooks at startup, a change takes effect from the *next* session. During
+development, `swift run` in the foreground works too.
 
 There is deliberately no "Launch at Login". With no packaged `.app` there's no bundle identity for
 macOS to register, so a login item records the path of whatever binary was running and goes stale
@@ -69,6 +76,7 @@ Once the command file is installed, control the daemon from inside a Claude Code
 | `/claude-maxx now` | open window immediately | `opening window` |
 | `/claude-maxx setup` | open window immediately, for first-run login | numbered setup walkthrough (see below) |
 | `/claude-maxx hide` (or `done`) | close the window, keep the current mode | `window hidden — mode stays ask` |
+| `/claude-maxx quit` | stop the daemon process entirely | `stopping the daemon — …` |
 | `/claude-maxx scroll on` / `scroll off` | toggle auto-advance on the video channels (applies live if the window is open; X/Reading have no auto behavior) | `auto-advance on/off` |
 | `/claude-maxx stats` | none | today's aggregate line (waits, content/waiting minutes, chip opt-in, videos completed) |
 | `/claude-maxx dashboard` | open the stats dashboard in its own native floating panel | `opening stats dashboard` |
@@ -125,20 +133,21 @@ not running until something starts it. Three ways, in the order you'll actually 
 | | |
 |---|---|
 | **Start with Claude Code** (menu bar toggle) | a `SessionStart` hook starts the daemon whenever you open Claude Code. This is the "never think about it" option, and takes effect from the *next* session. `scripts/claude-maxx-hook.sh enable\|disable\|status` is the same switch from a terminal. |
-| `/claude-maxx <anything>` | starts it on demand — the wrapper launches the binary, waits, and re-sends your subcommand, so the first command of the day both starts the daemon and answers. |
-| `./scripts/restart.sh` | starts it, or restarts it onto a newly built binary. |
+| `/claude-maxx <anything>` | starts it on demand. There is no `/claude-maxx start` — a command needs a daemon to receive it — so the wrapper launches the binary first whenever nothing answers, waits, and re-sends your subcommand. `/claude-maxx status` therefore both starts the daemon and reports on it. |
+| [`./scripts/start.sh`](./scripts/start.sh) | the same from a terminal; says `already running` rather than starting a second one. |
+| `./scripts/restart.sh` | restarts it onto a newly built binary (what you want after changing code). |
 
-To stop it: **Quit Claude Maxx** in the menu bar, or [`./scripts/stop.sh`](./scripts/stop.sh) when
-the menu isn't reachable. Both leave your hooks, logins, and stats alone — it starts again by any
-of the routes above.
+To stop it: `/claude-maxx quit`, **Quit Claude Maxx** in the menu bar, or
+[`./scripts/stop.sh`](./scripts/stop.sh). All three leave your hooks, logins, and stats alone — it starts
+again by any of the routes above.
 
 **"Fully off" means one of three different things**, so pick the one you want:
 
 - **Stop showing content, keep everything running.** `/claude-maxx off`. The daemon stays up and
   keeps counting sessions; it just never opens a window or offers a chip. This is the reversible
   one — `/claude-maxx ask` brings it back.
-- **Stop the process too.** `./scripts/stop.sh` (or menu → Quit), *and* turn off "Start with Claude
-  Code" so a new session doesn't bring it back. Nothing then runs until you deliberately start it.
+- **Stop the process too.** `/claude-maxx quit` (or `./scripts/stop.sh`, or menu → Quit), *and* turn
+  off "Start with Claude Code" so a new session doesn't bring it back. Nothing then runs until you deliberately start it.
 - **Remove it from this machine.** [`./scripts/uninstall.sh`](./scripts/uninstall.sh) — deletes the
   slash command and strips the hooks, leaving your stats, logins, and settings in place. Then
   delete the clone.

@@ -30,7 +30,11 @@ final class HookServerTests: XCTestCase {
         let statsFileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + ".jsonl")
         let stats = StatsStore(fileURL: statsFileURL)
-        return Router(settings: settings, stats: stats)
+        // Termination is stubbed for every router here, not just the quit
+        // tests: Router's default schedules a real `exit(0)` watchdog, so any
+        // future test that happens to route `quit` through this helper would
+        // take the test runner down with it.
+        return Router(settings: settings, stats: stats, terminate: {})
     }
 
     func testRouterUnknownPathReturnsUnknownEndpoint() {
@@ -73,6 +77,54 @@ final class HookServerTests: XCTestCase {
             "v\(Version.current) mode=ask active_sessions=1 window=hidden auto_advance=true",
             "one finishing must not close the window on the other"
         )
+    }
+
+    /// `quit` must answer before it exits. route(_:) runs before the response
+    /// is written, so terminating synchronously would hand the client an empty
+    /// body — and the wrapper reads "no response" as "daemon isn't running"
+    /// and launches a fresh one, making quit silently relaunch.
+    func testQuitAnswersBeforeTerminating() {
+        var terminated = false
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let stats = StatsStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jsonl"))
+        let router = Router(settings: settings, stats: stats, terminate: { terminated = true })
+
+        let response = router.route(HTTPRequestLine.parse("GET /cmd?arg=quit HTTP/1.1")!)
+
+        XCTAssertTrue(response.hasPrefix("stopping the daemon"), "got: \(response)")
+        XCTAssertTrue(terminated, "quit must actually request termination")
+    }
+
+    /// The bug this guards: `quit` answered "stopping the daemon" and the
+    /// process kept running, logging no `applicationWillTerminate`, because
+    /// `NSApp.terminate` is a request AppKit can defer or drop (a modal run
+    /// loop swallows the queued call). The reply is the only thing a caller can
+    /// check, so a requested exit is not enough — there must be a later stage
+    /// that stops asking.
+    ///
+    /// Note what the sibling test above cannot catch: it asserts termination
+    /// was *requested*, which was already true while the daemon survived.
+    func testQuitTerminatorForcesExitAfterAppKitIsGivenItsChance() {
+        var delays: [TimeInterval] = []
+        var order: [String] = []
+        var terminator = QuitTerminator(
+            requestTermination: { order.append("appkit") },
+            forceExit: { order.append("force") }
+        )
+        // Run each stage immediately, recording only when it was due — the
+        // schedule is the thing under test, not the waiting.
+        terminator.after = { delay, work in
+            delays.append(delay)
+            work()
+        }
+
+        terminator.schedule()
+
+        XCTAssertEqual(order, ["appkit", "force"], "AppKit gets first refusal, then the watchdog")
+        XCTAssertEqual(delays.count, 2, "both stages must be scheduled")
+        XCTAssertGreaterThan(delays[0], 0, "stage 1 must wait for the response to be written")
+        XCTAssertGreaterThan(delays[1], delays[0], "the watchdog must fire strictly after the request")
     }
 
     func testCmdModeGrammar() {

@@ -46,7 +46,7 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
 
 ## Tests
 
-`swift test` — 70 tests, all headless-safe. Note two AppKit limits found the hard way:
+`swift test` — 72 tests, all headless-safe. Note two AppKit limits found the hard way:
 `NSPanel` and `WKWebView` work fine in the test process, but constructing an `NSStatusItem`
 (i.e. a `Menu`) **aborts** it with no window-server connection. That is why
 `Menu.readingSubmenu` is static and takes its target.
