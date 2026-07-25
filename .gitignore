@@ -1,5 +1,12 @@
 .build/
 .swiftpm/
+
+# Separate video project that lives inside this clone — its own node_modules
+# and lockfile, nothing this daemon builds against. Both spellings, so it stays
+# ignored whichever one the directory ends up with.
+claude-max-video/
+claude-maxx-video/
+
 *.xcodeproj
 .DS_Store
 xcuserdata/
