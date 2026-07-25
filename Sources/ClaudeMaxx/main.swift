@@ -61,7 +61,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Router is the HTTP → Orchestrator translation boundary; HookServer
         // only ever talks to Orchestrator through it (not re-architecting
         // that boundary in this pass).
-        router = Router(settings: settings, stats: stats, orchestrator: orchestrator)
+        // The injected `terminate` differs from Router's default only in that
+        // it can still record an open episode when the watchdog has to bypass
+        // AppKit — the same shutdown → stop → exit(0) sequence the signal
+        // handlers below use, and for the same reason.
+        router = Router(
+            settings: settings,
+            stats: stats,
+            orchestrator: orchestrator,
+            terminate: { [weak self] in
+                QuitTerminator.daemon(beforeExit: {
+                    self?.orchestrator?.shutdown(reason: "quit watchdog")
+                    self?.server?.stop()
+                }).schedule()
+            }
+        )
         server = HookServer(router: router)
         do {
             try server.start()
