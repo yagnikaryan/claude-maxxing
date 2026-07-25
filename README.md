@@ -8,11 +8,6 @@ prompt is running, then removes it — with zero user action — the instant the
 needs your input. You're offered a choice, not an ambush: opt-in ("ask" mode, a small chip you can
 ignore) is the default, not a settings checkbox you'll never find.
 
-**Demo:** *(coming with packaging — no signed `.app` yet to record from in this environment.)* What
-it will show: chip appears in the top-right corner while Claude is mid-prompt → you click Watch →
-a small window opens bottom-right → the prompt finishes → the window vanishes and your terminal
-refocuses, all without touching the mouse again.
-
 ## Quickstart
 
 ```bash
