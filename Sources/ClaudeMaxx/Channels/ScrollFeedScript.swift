@@ -1,25 +1,21 @@
 import Foundation
 
-/// The shared auto-advance script for the vertical scroll feeds (Reels,
-/// TikTok). Both sites present the same shape — one full-viewport video at a
-/// time inside a virtualized scroller — and their adapters previously carried
-/// byte-identical copies of this source. That duplication is what let a round
-/// of scroll fixes land on Reels while TikTok silently kept the old broken
-/// behavior, so the source lives here once and each channel passes its id.
+/// Shared auto-advance for the vertical scroll feeds (Reels, TikTok): one
+/// full-viewport video at a time inside a virtualized scroller. Lives here once
+/// because byte-identical copies in each adapter let a round of scroll fixes land
+/// on Reels while TikTok silently kept the old behavior.
 ///
-/// A channel that later needs genuinely site-specific advancing (a real
-/// next-chevron selector, say) should stop calling this rather than grow
-/// conditionals inside it.
+/// A channel needing genuinely site-specific advancing should stop calling this
+/// rather than grow conditionals inside it.
 enum ScrollFeedScript {
 
-    /// `channelID` is interpolated into the `cm` bridge messages so the
-    /// native log can attribute an advance (or a failure) to a channel.
+    /// `channelID` is interpolated into the `cm` messages so the log can attribute
+    /// an advance to a channel.
     ///
-    /// `nextSelectors` are the site's own "next" controls, tried in order
-    /// before any scrolling. A site that ships one (YouTube Shorts) should use
-    /// it — clicking the real control is what the site expects, and it moves
-    /// the feed exactly one item. Sites where the selector would be a guess
-    /// (Reels, TikTok — see SPEC §8.2) pass none and scroll instead.
+    /// `nextSelectors` are the site's own "next" controls, tried before scrolling.
+    /// A site that ships one (Shorts) should use it — clicking the real control
+    /// moves exactly one item. Where it would be a guess (Reels, TikTok), pass none
+    /// and scroll.
     static func source(channelID: String, nextSelectors: [String] = []) -> String {
         let selectorList = "[" + nextSelectors.map { "'\($0)'" }.joined(separator: ", ") + "]"
         return """
@@ -59,12 +55,10 @@ enum ScrollFeedScript {
             return el.tagName + (el.id ? '#' + el.id : '') + cls;
           }
 
-          // The feed is virtualized: several <video> elements coexist, so
-          // querySelector('video') returns whichever is first in the DOM, not
-          // the one being watched. Everything below — ended detection,
-          // pausing, and the advance check — has to follow the video nearest
-          // the viewport's center instead, or it tracks an offscreen item and
-          // reports that nothing changed however far the feed scrolled.
+          // Virtualized feed: several <video>s coexist, so querySelector('video')
+          // returns the first in the DOM, not the one being watched. Track the one
+          // nearest the viewport centre or everything below follows an offscreen
+          // item and reports nothing changed however far the feed scrolled.
           function cmCurrentVideo() {
             var vids = Array.prototype.slice.call(document.querySelectorAll('video'));
             if (!vids.length) return null;
@@ -79,18 +73,16 @@ enum ScrollFeedScript {
             return best || vids[0];
           }
 
-          // Identity of the item on screen. Compared before/after an advance
-          // so a stats event means the feed genuinely moved on, rather than
-          // that we asked it to — the site may ignore or undo any single
-          // mechanism below.
+          // Compared before/after an advance, so a stats event means the feed
+          // genuinely moved rather than that we asked it to — the site may ignore
+          // or undo any single mechanism below.
           function cmSnapshot() {
             var v = cmCurrentVideo();
             return (v && (v.currentSrc || v.src)) || location.href;
           }
 
-          // The feed item holding this video: the ancestor that is a direct
-          // child of the scroller, i.e. the thing one "reel" of scrolling is
-          // supposed to move by.
+          // The ancestor that is a direct child of the scroller — the thing one
+          // "reel" of scrolling moves by.
           function cmItemFor(v, container) {
             if (!v || !container) return null;
             var node = v;
@@ -125,19 +117,13 @@ enum ScrollFeedScript {
             }
           }
 
-          // These feeds set `scroll-snap-type: y mandatory` with items aligned
-          // to `start`, so the browser pins each item's top edge to the top of
-          // the scroller. With an item shorter than the viewport that leaves
-          // all the slack at the bottom and the reel rides high; worse, any
-          // scroll of ours that lands between snap points gets yanked to the
-          // nearest one, so correcting the position by scrolling alone just
-          // fights the browser.
-          //
-          // Re-aligning the snap points themselves is the fix: the browser
-          // then centers each item natively, and our advance agrees with it
-          // instead of competing. Items taller than the viewport keep `start`
-          // — centering those would clip the top, which is the very thing this
-          // is meant to prevent, and clipping the bottom is the lesser evil.
+          // These feeds use `scroll-snap-type: y mandatory` with items aligned to
+          // `start`, so a short item leaves its slack at the bottom and rides high,
+          // and any scroll of ours landing between snap points gets yanked back —
+          // correcting by scrolling alone just fights the browser. Moving the snap
+          // points instead makes the browser centre each item natively. Items
+          // taller than the viewport keep `start`; centring those would clip the
+          // top, and clipping the bottom is the lesser evil.
           function cmAlignItems(container) {
             if (!container) return;
             var vp = cmViewport(container);
@@ -151,13 +137,10 @@ enum ScrollFeedScript {
               var want = h <= vpH ? 'center' : 'start';
               if (k.style.scrollSnapAlign !== want) k.style.scrollSnapAlign = want;
             }
-            // Changing where the snap points *are* doesn't move the page: a
-            // freshly loaded feed keeps the scroll offset the site chose under
-            // its own top-alignment, so the first reel rides high until
-            // something scrolls. Correct once per page, after layout settles.
-            // Deliberately not repeated for later items — the browser snaps
-            // those into place on its own now, and re-running would yank the
-            // page while the user is scrolling by hand.
+            // Moving the snap points doesn't move the page, so the first reel still
+            // rides high at the offset the site chose. Correct it once, after layout
+            // settles — the browser handles later items, and re-running would yank
+            // the page while the user scrolls by hand.
             if (!window.__cmAlignedOnce) {
               window.__cmAlignedOnce = true;
               setTimeout(function() {
@@ -168,15 +151,11 @@ enum ScrollFeedScript {
             }
           }
 
-          // Nudge whatever is on screen back to centered. Scrolling by the
-          // container's height assumes an item is exactly one viewport tall;
-          // it is not, so each advance left the reel a little further off and
-          // the top edge ended up cut. Called only right after our own
-          // advance — never on a timer, which would fight the user's own
-          // scrolling.
-          // Where an item *should* sit: centered when it fits, top-aligned
-          // when it is taller than the viewport. Same rule as cmAlignItems, so
-          // scrolling and snapping never disagree about the target.
+          // Scrolling by the container's height assumes an item is exactly one
+          // viewport tall; it isn't, so each advance drifted further off until the
+          // top edge was cut. Called only right after our own advance — on a timer
+          // it would fight the user's scrolling. The target follows the same rule as
+          // cmAlignItems, so scrolling and snapping never disagree.
           function cmDesiredOffset(item, container) {
             var vp = cmViewport(container);
             var vpH = vp.bottom - vp.top;
@@ -195,12 +174,11 @@ enum ScrollFeedScript {
             return off;
           }
 
-          // Every way we know to move the feed on, most site-native first.
-          // Each returns false when it isn't applicable here, so the caller
-          // can fall through to the next one — and crucially each is verified
-          // afterwards, because "the button exists" is not "the feed moved".
-          // YouTube's chevron clicks cleanly and does nothing at all; the old
-          // Shorts script reported those as successful advances.
+          // Every way we know to move the feed on, most site-native first; each
+          // returns false when inapplicable so the caller falls through. All are
+          // verified afterwards, because "the button exists" is not "the feed
+          // moved" — YouTube's chevron clicks cleanly and does nothing, which the
+          // old Shorts script reported as a successful advance.
           function cmMechanisms() {
             var v = cmCurrentVideo();
             var container = v ? cmScrollable(v) : null;
@@ -220,10 +198,9 @@ enum ScrollFeedScript {
               var item = cmItemFor(v, container);
               var next = item && item.nextElementSibling;
               if (!next) return false;
-              // Same rule as cmAlignItems/cmRecenter. Centering an item taller
-              // than the viewport contradicts its `start` snap alignment, and
-              // the correction afterwards scrolled a full viewport back —
-              // undoing the advance, seen as advance-failed in a short window.
+              // Same rule as cmAlignItems/cmRecenter: centring a too-tall item
+              // contradicts its `start` snap, and the correction then scrolled a
+              // whole viewport back, undoing the advance.
               var beforeTop = container.scrollTop;
               cmScrollByPx(container, cmDesiredOffset(next, container));
               return Math.abs(container.scrollTop - beforeTop) > 1;
@@ -265,10 +242,9 @@ enum ScrollFeedScript {
 
           function advance() {
             if (!window.__cmAutoAdvance) return;
-            // After a scroll the feed re-shuffles its <video> elements, and
-            // the item arriving at center may already be mid-playback near
-            // its end — which re-triggers the completion check immediately
-            // and skips an item the user never saw. One advance per cooldown.
+            // The item arriving at centre after a scroll may already be near its
+            // end, re-triggering completion and skipping an item the user never
+            // saw. One advance per cooldown.
             var now = Date.now();
             if (window.__cmLastAdvanceAt && now - window.__cmLastAdvanceAt < CM_ADVANCE_COOLDOWN_MS) return;
             window.__cmLastAdvanceAt = now;
@@ -279,10 +255,8 @@ enum ScrollFeedScript {
               var before = cmSnapshot();
               var mechs = cmMechanisms();
 
-              // Walk the mechanisms until one demonstrably moves the feed.
-              // Confirmation is what makes the fallback possible at all: a
-              // mechanism that runs without error still has to be checked, and
-              // only then can we decide to try the next one.
+              // Confirmation is what makes falling through possible: a mechanism
+              // that runs without error still has to be checked.
               function attempt(i) {
                 if (i >= mechs.length) {
                   cmNotify('advance-failed', 'exhausted all ' + mechs.length + ' mechanisms');
@@ -293,17 +267,15 @@ enum ScrollFeedScript {
                 try { ran = m.run(); } catch (e) { cmNotify('error', m.name + ': ' + (e && e.message ? e.message : e)); }
                 if (!ran) { attempt(i + 1); return; }
 
-                // Two checks per mechanism: a scroll settles at once, but an
-                // SPA (YouTube) animates the transition and reattaches its
-                // player, which routinely needs more than a second. A single
-                // early check called a working advance a failure.
+                // Two checks: a scroll settles at once, but an SPA (YouTube)
+                // animates and reattaches its player, routinely taking over a
+                // second. A single early check called a working advance a failure.
                 function confirm(waitMs, isLast) {
                   setTimeout(function() {
                     try {
-                    // Correct after the feed settles — lazy-loaded media and
-                    // scroll-snap both change an item's box afterwards — and
-                    // report the correction so drift shows up in the log
-                    // rather than only on screen.
+                    // After the feed settles: lazy media and scroll-snap both change
+                    // an item's box. Reported so drift shows in the log, not only
+                    // on screen.
                     var off = cmRecenter();
                     var drift = Math.abs(off) > 2 ? ' recentered ' + Math.round(off) + 'px' : '';
                     if (cmSnapshot() !== before) {
@@ -323,15 +295,11 @@ enum ScrollFeedScript {
             }, delay);
           }
 
-          // A feed that never starts playing never ends, so the
-          // watch-complete check never runs and the channel simply sits
-          // there. Nudge a paused video back into playback and report the
-          // rejection if the site or WebKit refuses — `play()` rejects with a
-          // named error, which is the only way to tell an autoplay block from
-          // a site that paused itself.
-          //
-          // Bounded, and reset per item: a user who deliberately pauses gets
-          // to keep it paused after a few attempts rather than fighting us.
+          // A feed that never starts never ends, so the watch-complete check never
+          // runs and the channel just sits there. `play()`'s rejection is reported
+          // because its named error is the only way to tell an autoplay block from
+          // a site that paused itself. Bounded and reset per item, so a user who
+          // deliberately pauses gets to keep it paused.
           function cmEnsurePlaying(v) {
             var src = v.currentSrc || v.src || '';
             if (window.__cmPlaySrc !== src) { window.__cmPlaySrc = src; window.__cmPlayTries = 0; }

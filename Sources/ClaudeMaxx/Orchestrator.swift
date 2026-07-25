@@ -3,9 +3,8 @@ import Foundation
 
 // MARK: - PresentationState (SPEC §6)
 
-/// Presentation states of the content window/chip. Matches SPEC §6 exactly:
-/// IDLE, PENDING (debounce armed), OFFERING (chip visible), SHOWING (window
-/// visible), ALERTING (window visible, paused, attention requested).
+/// SPEC §6: PENDING = debounce armed, OFFERING = chip visible, SHOWING = window
+/// visible, ALERTING = visible, paused, attention requested.
 enum PresentationState: String {
     case idle
     case pending
@@ -63,10 +62,8 @@ struct SessionTracker {
 
 // MARK: - IDLE-transition notification (SPEC §9.3)
 
-/// Posted every time Orchestrator's state machine (re-)enters IDLE, so Menu
-/// can refresh its disabled stats item "on IDLE transitions" per §9.3
-/// without polling. Posted on Orchestrator's private background `queue` —
-/// observers must hop to main before touching AppKit.
+/// Lets Menu refresh its stats item on IDLE transitions without polling (§9.3).
+/// Posted on Orchestrator's background queue — observers must hop to main.
 extension Notification.Name {
     static let claudeMaxxDidBecomeIdle = Notification.Name("com.claudemaxx.didBecomeIdle")
 }
@@ -87,10 +84,8 @@ final class Orchestrator {
 
     private let queue = DispatchQueue(label: "com.claudemaxx.orchestrator")
 
-    /// Lazily constructed so `Orchestrator()`'s init never touches AppKit
-    /// unless a chip is actually shown — keeps `Router()`'s default-
-    /// constructed Orchestrator (e.g. in HookServerTests) safe to build
-    /// without a live window server.
+    /// Lazy so init never touches AppKit unless a chip is shown — that is what
+    /// keeps a default-constructed Orchestrator safe to build in tests.
     private lazy var chipPresenter: ChipPresenting = {
         let presenter = chipPresenterFactory()
         presenter.onSelect = { [weak self] channelID in self?.chipSelect(channelID: channelID) }
@@ -98,8 +93,7 @@ final class Orchestrator {
         return presenter
     }()
 
-    /// Lazily constructed for the same reason as `chipPresenter` above.
-    /// `FeedPresenting` has no callbacks, so no wiring beyond construction.
+    /// Lazy for the same reason; no callbacks to wire.
     private lazy var feedPresenter: FeedPresenting = {
         feedPresenterFactory()
     }()
@@ -117,18 +111,9 @@ final class Orchestrator {
     private var skippedThisWait = false
     /// Captured at PENDING entry, for snap-back.
     private var capturedFrontmostApp: NSRunningApplication?
-    /// True for a content episode opened via a manual override (`.cmd`,
-    /// `.http`, `.menu` — Show Window Now / `/claude-maxx now`/`setup` /
-    /// `/show`), false for the automatic per-prompt flow (`.auto`, `.chip`).
-    /// Set in `beginShowing`, read by `handleWaitEnded`. Exists because
-    /// `/claude-maxx now`/`setup` is itself submitted as a Claude Code
-    /// prompt — its own `UserPromptSubmit`/`Stop` hooks fire around that
-    /// same short-lived turn, so without this flag the window it just
-    /// opened would immediately close again the instant that trivial
-    /// curl-and-echo turn ends, defeating the entire point of a manual
-    /// "open it so I can log in" override. A manually-pinned episode is
-    /// closed only by an explicit `/claude-maxx off` (`handleCommandOff`)
-    /// or the watchdog safety net — never by an incidental `/stop`.
+    /// True for a manual override (`.cmd`, `.http`, `.menu`), false for the
+    /// automatic per-prompt flow. A pinned episode ignores `/stop` and closes only
+    /// on `/claude-maxx off` or the watchdog — see CLAUDE.md.
     private var isManuallyPinned = false
 
     /// The showDelay debounce, one-shot.
@@ -183,35 +168,21 @@ final class Orchestrator {
         queue.sync { handleShowNow(openedBy: openedBy) }
     }
 
-    /// Re-presents the current settings while a content episode is already
-    /// open: re-resolves `settings.channel` and re-points the shared webview
-    /// (Menu's channel picker during a setup/login session — multiple
-    /// platforms to sign into in one open episode) and re-applies
-    /// `settings.autoAdvance` live (`/claude-maxx scroll on|off` while the
-    /// window is up — without this the toggle only took effect on the *next*
-    /// open, making autoscroll untestable in a setup session). A no-op
-    /// outside SHOWING, including ALERTING: re-presenting fresh content
-    /// there would leave `state` at `.alerting` (still "paused, awaiting
-    /// attention") while the new channel is actually unpaused and playing,
-    /// and `handleAttention`'s `state == .showing` guard (§6) would then
-    /// no-op a genuinely new `/attention` until the user interacts — so a
-    /// refresh during an attention alert stays a persist-only no-op, same
-    /// as while idle. Deliberately does not touch state/timers/stats — it
-    /// is not a new content episode, just a live re-point of the current one.
+    /// Re-points an already-open episode at the current settings: the channel
+    /// picker mid-login, and `scroll on|off` taking effect now rather than on the
+    /// next open. Not a new episode, so it touches no state, timers or stats.
+    ///
+    /// A no-op outside SHOWING, ALERTING included: re-presenting there would leave
+    /// `state == .alerting` while the new channel plays unpaused, and
+    /// `handleAttention`'s guard would then swallow a genuinely new `/attention`.
     func refreshIfShowing() {
         queue.sync { handleRefreshIfShowing() }
     }
 
-    /// Suppresses presentation for the current wait only — cancels PENDING
-    /// or dismisses OFFERING without touching the session count. Called by
-    /// Router for every non-window-opening `/cmd` arg (`scroll on`, `status`,
-    /// `ask`, …): the `/claude-maxx` command is itself a Claude Code prompt,
-    /// so its own `UserPromptSubmit` arms the debounce, and a model turn
-    /// routinely outlives `showDelay` — without this, a plain settings
-    /// command flashes the window (auto) or chip (ask) for its own turn.
-    /// SHOWING/ALERTING are left alone: an episode already on screen (e.g.
-    /// a pinned setup window, or a real prompt's content in another session)
-    /// must not be killed by an incidental settings command.
+    /// Cancels PENDING or dismisses OFFERING without touching the session count,
+    /// so a settings command doesn't flash a window for its own turn (CLAUDE.md).
+    /// SHOWING/ALERTING are left alone — an episode already on screen must not be
+    /// killed by an incidental settings command.
     func suppressCurrentWait() {
         queue.sync { handleSuppressCurrentWait() }
     }
@@ -236,67 +207,43 @@ final class Orchestrator {
         queue.sync { tracker.activeCount }
     }
 
-    /// Chip-only OFFERING does NOT count as window-visible — matches the
-    /// existing `/status` contract where `window=hidden` while a chip could
-    /// be shown.
+    /// OFFERING is not window-visible: `/status` reports `window=hidden` while a
+    /// chip is up.
     var isWindowVisible: Bool {
         queue.sync { state == .showing || state == .alerting }
     }
 
-    /// True only while a *manually pinned* episode is on screen (Show Window
-    /// Now / `/claude-maxx now`/`setup`) — the kind that ignores prompt
-    /// endings and only closes via `/claude-maxx off`/`hide` or the
-    /// watchdog. Surfaced in `/status` so "why isn't the window closing?"
-    /// is answerable without reading this file.
+    /// Surfaced in `/status` so "why isn't the window closing?" is answerable
+    /// without reading this file.
     var isWindowPinned: Bool {
         queue.sync { (state == .showing || state == .alerting) && isManuallyPinned }
     }
 
     // MARK: Private handlers (assume already on `queue`)
 
-    /// Every inline `state = .idle` assignment goes through this so Menu's
-    /// "refreshed on IDLE transitions" AC (§9.3) has exactly one signal to
-    /// observe. Posting on every idle-entry (including already-idle
-    /// defensive paths) is harmless — Menu's handler just recomputes stats
-    /// from StatsStore, which is idempotent.
+    /// The single signal Menu observes for IDLE transitions (§9.3). Posting on
+    /// already-idle paths too is harmless — Menu's handler is idempotent.
     private func enterIdle() {
         state = .idle
         NotificationCenter.default.post(name: .claudeMaxxDidBecomeIdle, object: nil)
     }
 
-    /// `suppress` marks a turn that must never present content — set by the
-    /// `UserPromptSubmit` hook when the prompt is itself a `/claude-maxx`
-    /// command.
-    ///
-    /// The old `suppressCurrentWait()` path could not do this. It runs when
-    /// the `/cmd` request *arrives*, and a slash command's shell body can take
-    /// far longer than `showDelay` to execute — measured at 17 s against a 4 s
-    /// debounce. So `/claude-maxx off` armed the debounce at submit, opened
-    /// the window 4 s later, played content for 12 s, and only then applied
-    /// the command that closed it: the window the command existed to shut
-    /// off. Deciding at submit time is the only point early enough.
-    ///
-    /// Confined to the 0→1 transition so a command typed in one session
-    /// cannot cancel a window another session's prompt legitimately owns.
+    /// `suppress` marks a turn that must never present content, decided at submit
+    /// time because `/cmd` arrives too late to help (CLAUDE.md). Confined to the
+    /// 0→1 transition so a command in one session cannot cancel a window another
+    /// session's prompt owns.
     private func handleStart(sid: String?, suppress: Bool = false) -> String {
         let t = now()
         let becameActive = tracker.start(sid: sid, now: t)
-        // Session accounting decides whether the window is up, but left no
-        // trace at all — so "the window closed while I was mid-prompt" was
-        // unanswerable after the fact. Log every transition with the id and
-        // the resulting count: a close is legitimate only when the count
-        // genuinely reached 0, and this is the only way to tell that from a
-        // miscounted session.
+        // Without this line "the window closed while I was mid-prompt" is
+        // unanswerable: a close is legitimate only if the count truly reached 0.
         cmLog("session start sid=\(sid ?? "<anon>") active=\(tracker.activeCount)\(becameActive ? " (0→1)" : "")\(suppress ? " suppressed" : "")")
         if becameActive {
             waitStartedAt = t
             skippedThisWait = suppress
-            // Only from a genuine idle start: a 0→1 transition can arrive
-            // while a manually-opened window is already showing, and
-            // clobbering that to .pending made the state machine forget it was
-            // in a content episode — the eventual /stop then took the
-            // chip-dismiss path, never called hideWindowAction(), and the
-            // window stayed open forever.
+            // Genuine idle starts only. Clobbering an already-showing manual
+            // window to .pending made the machine forget it was in an episode, so
+            // the eventual /stop took the chip path and the window never closed.
             if settings.mode != .off && state == .idle && !suppress {
                 enterPending(at: t)
             }
@@ -352,11 +299,9 @@ final class Orchestrator {
     private func handleStop(sid: String?) -> String {
         let known = sid.map { tracker.sessions.keys.contains($0) } ?? (tracker.anonCount > 0)
         let becameEmpty = tracker.stop(sid: sid)
-        // `known=false` is the tell for a stop that closed nothing it owned —
-        // a duplicate (both Stop and SessionEnd fire /stop), or an id the
-        // daemon never saw a start for. Harmless with real ids, since an
-        // unknown id is dropped; worth seeing in the log because with
-        // anonymous sessions the same duplicate *does* decrement the count.
+        // `known=false` means this stop closed nothing it owned — a duplicate (both
+        // Stop and SessionEnd fire /stop) or an unseen id. Harmless for real ids,
+        // but for anonymous sessions the duplicate *does* decrement.
         cmLog("session stop sid=\(sid ?? "<anon>") known=\(known) active=\(tracker.activeCount)\(becameEmpty ? " (→0, closing)" : "")")
         if becameEmpty {
             handleWaitEnded(closedBy: .stop, suppressSnapBack: false)
@@ -364,11 +309,9 @@ final class Orchestrator {
         return "session stopped (active=\(tracker.activeCount))"
     }
 
-    /// Signal-driven shutdown (SIGTERM/SIGHUP/SIGINT). Closes any open
-    /// content episode so the log and the stats agree with what the user just
-    /// saw happen — before this, a killed daemon took its window off screen
-    /// with no `content` event and no log line, which is exactly the
-    /// "the window closed by itself and nothing recorded it" case.
+    /// Closes any open episode so stats and log agree with what the user saw. A
+    /// killed daemon otherwise takes its window off screen with no record — the
+    /// "window closed by itself and nothing recorded it" case.
     func shutdown(reason: String) {
         queue.sync {
             cmLog("shutting down: \(reason) (state=\(state) active=\(tracker.activeCount))")
@@ -398,12 +341,9 @@ final class Orchestrator {
             enterIdle()
         case .showing, .alerting:
             if closedBy == .stop && isManuallyPinned {
-                // Manual override (see `isManuallyPinned`'s doc comment) —
-                // an incidental /stop from whatever session happened to
-                // trigger the manual show must not close it. Leave state,
-                // showingStartedAt/showOpenedBy, and capturedFrontmostApp
-                // untouched; the episode continues until an explicit
-                // /claude-maxx off or the watchdog closes it instead.
+                // Manual override: an incidental /stop must not close it. Leave
+                // everything untouched and let /claude-maxx off or the watchdog end
+                // the episode (see `isManuallyPinned`).
                 break
             }
             pauseContent()
@@ -465,9 +405,7 @@ final class Orchestrator {
             dismissChip()
             enterIdle()
         case .showing, .alerting:
-            // Unconditional, unlike handleWaitEnded's /stop path — an
-            // explicit /claude-maxx off always closes, pinned or not; it's
-            // the one thing that's supposed to end a manually-pinned episode.
+            // Unlike the /stop path: an explicit off always closes, pinned or not.
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: .cmd, at: now())
@@ -483,13 +421,9 @@ final class Orchestrator {
     private func handleShowNow(openedBy: ContentOpenedBy) {
         switch state {
         case .showing, .alerting:
-            // Already visible — but if a manual override (menu/cmd/http)
-            // arrives while an *automatic* (.auto/.chip) episode is already
-            // showing, upgrade it to pinned. Without this, a user running
-            // /claude-maxx now/setup to explicitly "take over" an
-            // already-open window would still have it close on the
-            // originating session's next /stop, since nothing here
-            // otherwise touches isManuallyPinned at all.
+            // A manual override arriving over an automatic episode upgrades it to
+            // pinned. Without this, "take over this window" still let the
+            // originating session's next /stop close it.
             if openedBy == .cmd || openedBy == .http || openedBy == .menu {
                 isManuallyPinned = true
             }
@@ -503,15 +437,11 @@ final class Orchestrator {
         }
     }
 
-    /// ALERTING re-points too, and resolves the alert while doing it.
-    ///
-    /// The window is on screen in both states, so gating on `.showing` alone
-    /// made the menu's channel picker silently do nothing whenever a
-    /// notification had landed first — reported as "it's not changing the
-    /// window". But widening the guard without clearing the alert would leave
-    /// fresh content playing while `state` still read `.alerting`, so the next
-    /// `/attention` would no-op against it and never pause. Picking a channel
-    /// *is* user interaction, so the alert clears with it.
+    /// ALERTING re-points too, and resolves the alert while doing it. Gating on
+    /// `.showing` alone made the channel picker silently do nothing once a
+    /// notification had landed ("it's not changing the window"), but widening the
+    /// guard without clearing the alert would leave the next `/attention` unable to
+    /// pause. Picking a channel *is* user interaction, so the alert clears with it.
     private func handleRefreshIfShowing() {
         cmLog("refreshIfShowing: state=\(state) channel=\(settings.channel)")
         switch state {
@@ -585,20 +515,13 @@ final class Orchestrator {
 
     // MARK: Presentation actions
     //
-    // All four hop to main thread like presentChip()/dismissChip() below —
-    // these handlers run on `queue` (a background serial queue), and the
-    // lazy `feedPresenter`/`chipPresenter` must first-materialize on the
-    // main thread since AppKit view/window construction off the main
-    // thread is undefined behavior.
+    // All of these main-hop. The handlers run on `queue`, and the lazy
+    // `feedPresenter`/`chipPresenter` must *first-materialize* on main: AppKit
+    // construction off main is undefined behavior, and the presenters' own
+    // internal main-hops happen too late to protect their construction site.
 
     private func presentChip() {
-        // `chipPresenter` is a lazy var whose first access constructs a real
-        // ChipPanel (NSPanel + AppKit views). presentChip()/dismissChip() run
-        // on `queue` (a background serial queue), so that first materialization
-        // must be pushed onto the main thread explicitly — AppKit view/window
-        // construction off the main thread is undefined behavior. `.present()`
-        // itself also main-hops internally, but only *after* the lazy var
-        // already exists, which is too late to protect the construction site.
+        // Main-hopped for the reason given above the MARK.
         DispatchQueue.main.async { [weak self] in
             self?.chipPresenter.present()
         }
@@ -611,11 +534,8 @@ final class Orchestrator {
     }
 
     private func presentWindow() {
-        // Resolve `settings.channel` (persisted cm.channel, mutated by the
-        // chip picker and the menu's channel selector) through the channel
-        // registry (§12 M2 task 11). Falls back to the first registered
-        // channel if the stored id doesn't match anything current (e.g. a
-        // stale value from a channel that no longer exists).
+        // Falls back to the first registered channel when the persisted id no
+        // longer matches one — e.g. a channel that has since been removed.
         let channel = ChannelRegistry.channel(withID: settings.channel) ?? ChannelRegistry.all.first
         DispatchQueue.main.async { [weak self] in
             self?.feedPresenter.show(channel: channel)

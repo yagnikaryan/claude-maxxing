@@ -69,7 +69,10 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
 - **`file://` needs `loadFileURL`** — `webView.load(URLRequest:)` refuses file URLs and fails
   *silently*, presenting as a blank window. Channels load through `ContentChannel.load(into:)`.
 - **A PDF has no DOM** — injected user scripts, scroll restore, and the attention banner all
-  no-op on PDFs. Do not "fix" this with JS; it needs PDFKit.
+  no-op on PDFs, so Reading opens them at the top every time. Do not "fix" this with JS, and do not
+  fake it with `#page=`: WebKit honors that on load but never reports the page you are actually on,
+  so it would restore a position it cannot capture. A real fix means a PDFKit `PDFView` alongside
+  the shared webview, which changes `FeedPanel`'s one-webview design.
 - **`FeedPanel.shouldLoad` keys on `contentIdentity`, not channel id** — a channel that can
   change content without changing identity (Reading) must fold the selection in, or switching
   items silently keeps the old page.
@@ -84,9 +87,42 @@ window and navigation behavior can be reconstructed. `cmLog` writes there.
   `suppress=1`, decided at submit time. The `/cmd` path cannot do this: a slash command's shell
   body can take longer than `showDelay` to run (measured 17 s vs 4 s), so by the time the command
   arrives the window is already up.
+- **A manually-opened window must survive its own prompt's `/stop`** — `/claude-maxx now` and
+  `setup` are themselves submitted as Claude Code prompts, so their `UserPromptSubmit`/`Stop` hooks
+  fire around that same short-lived turn. Without `Orchestrator.isManuallyPinned` the window closes
+  the instant that curl-and-echo turn ends, which defeats the entire point of "open it so I can log
+  in". A pinned episode closes only on `/claude-maxx off` or the watchdog.
 - **Changing `hooks-settings.json` requires users to re-run `install.sh`** — pulling does not
   update `settings.json`. Add a `doctor.sh` check whenever hook behavior changes.
 - **Never `print()` from the daemon** — stdout is block-buffered into the log file, so the line
   is lost unless the process exits cleanly. Use `cmLog` (stderr, unbuffered).
-- **Style** — comments explain *why*, especially the failure that motivated the code. Match
-  that; do not add narration of what a line does.
+- **Three `WKWebViewConfiguration` lines are load-bearing for login and playback**, and none of
+  them look it. `WKWebsiteDataStore.default()` (not `.nonPersistent()`) is what makes sign-in
+  survive relaunch — storage lands under `~/Library/WebKit/ClaudeMaxx`, keyed by process name, even
+  unbundled. `applicationNameForUserAgent = "Version/… Safari/…"` is required because WKWebView's
+  default UA stops at `(KHTML, like Gecko)`, the fingerprint of an embedded webview: Instagram runs
+  the full password+captcha dance and then silently withholds the `sessionid` cookie, so login can
+  never persist no matter how the data store is set. `mediaTypesRequiringUserActionForPlayback = []`
+  is required because nothing in this window ever supplies a user gesture — TikTok sat paused at
+  t=0 forever, which also starved the watch-complete check driving auto-advance, and because Reels
+  was allowed under the default it presented as a TikTok-only scrolling bug. Hiding still
+  force-pauses (`hide()` plus the channels' `__cmHidden` poll), so audio does not leak.
+- **`FeedPanel` must override `canBecomeKey`** — a borderless panel defaults to false, which
+  leaves WebKit treating every page as blurred: login forms never take a cursor ("I can't type into
+  the Instagram login"). This does not violate SPEC decision #7, because the panel still never
+  *takes* key on show — `performShow` uses `orderFrontRegardless`, never `makeKeyAndOrderFront`.
+- **`SIG_IGN` before `DispatchSourceSignal`** — the default action for SIGTERM/INT/HUP kills the
+  process before the source ever fires, so `applicationWillTerminate` never runs and the daemon
+  vanishes with no record. `installSignalHandlers` suppresses the default first, on purpose.
+- **`NSApp.terminate` is a request, not an exit** — `applicationShouldTerminate` can defer it and
+  a modal run loop (`Menu`'s `NSAlert`/`NSOpenPanel`) can swallow the queued call. `quit` therefore
+  goes through `QuitTerminator`: ask AppKit, then `exit(0)` from a **global** queue if still alive.
+  Stage 2 must never be scheduled on main — a blocked main thread is the case it exists for.
+- **A `/claude-maxx` reply is not evidence** — the command file makes Claude report the wrapper's
+  output, and a reply invented when that output is missing reads exactly like a real one. `daemon
+  started` for a daemon that never started sends you hunting for a bug in the daemon instead of in
+  the command that failed to fire. Confirm with `pgrep -f ClaudeMaxx` or the log before believing it
+  — that includes replies *you* just produced.
+- **Style** — comments explain *why*, especially the failure that motivated the code, and stay
+  short. The durable place for a failure is this list, not a long block mid-file; add it here and
+  leave a one-line pointer at the code. Do not add narration of what a line does.

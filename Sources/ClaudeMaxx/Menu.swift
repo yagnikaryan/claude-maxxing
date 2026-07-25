@@ -1,12 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Menu bar surface (SPEC §12 M2 task 12, §9.3). Owns the `NSStatusItem` and
-/// its `NSMenu`: the cheapest stats surface ("menu bar — disabled first menu
-/// item... refreshed on IDLE"), mode selection, and the channel picker.
-/// Mode/channel writes go straight through the same `SettingsStore` the
-/// `/cmd` HTTP path uses, so persistence and behavior stay identical
-/// regardless of which surface changed them.
+/// Menu bar surface (SPEC §9.3): stats, mode selection, channel picker. Writes go
+/// through the same `SettingsStore` as the `/cmd` HTTP path, so behavior is
+/// identical whichever surface changed them.
 final class Menu: NSObject, NSMenuDelegate {
     private let settings: SettingsStore
     private let stats: StatsStore
@@ -62,13 +59,9 @@ final class Menu: NSObject, NSMenuDelegate {
         menu.addItem(dashboard)
         menu.addItem(.separator())
 
-        // First-run setup / debug entry point (§8.1, §14): opens the feed
-        // window on demand, bypassing the showDelay debounce and independent
-        // of any active Claude Code session, so a user can log into a
-        // channel's platform — or a developer can eyeball the window —
-        // without waiting on a real prompt. Safe to leave open indefinitely;
-        // nothing auto-hides it (SPEC §6's IDLE transitions only fire from
-        // an active wait or /cmd off).
+        // Opens the window bypassing the debounce and independent of any session,
+        // so a platform login doesn't have to wait on a real prompt. Safe to leave
+        // open — nothing auto-hides a pinned episode.
         let showNow = NSMenuItem(title: "Show Window Now", action: #selector(showWindowNow), keyEquivalent: "")
         showNow.target = self
         menu.addItem(showNow)
@@ -115,12 +108,9 @@ final class Menu: NSObject, NSMenuDelegate {
 
     // MARK: Stats (§9.3, build item 12)
 
-    /// Single flat line by default: `"Today: Xm content / Ym waiting (Z
-    /// waits)"` (§9.3's example, verbatim). Once more than one channel has
-    /// logged a `content` event today, breaks into a waiting-only header
-    /// plus one indented per-channel line (build item 12's AC) — channel
-    /// order follows `ChannelRegistry.all` so the breakout is stable run to
-    /// run.
+    /// One flat line until more than one channel has logged content today, then a
+    /// waiting-only header plus an indented line per channel. Order follows
+    /// `ChannelRegistry.all`, so the breakout is stable run to run.
     private func statsItems() -> [NSMenuItem] {
         let daily = stats.dailyStats(for: Date())
         let waitMinutes = Int(daily.waitSeconds / 60)
@@ -150,15 +140,12 @@ final class Menu: NSObject, NSMenuDelegate {
 
     // MARK: Reading list
 
-    /// The list you pick from, plus the two ways to grow it. Selecting an
-    /// entry both switches to Reading and opens that entry — there is no
-    /// "just switch to Reading" item, because with a list this is always the
-    /// same question: read *which* one.
+    /// Selecting an entry both switches to Reading and opens it — with a list the
+    /// question is always read *which* one, so there is no bare "switch to Reading".
     ///
-    /// The checkmark tracks the selected entry regardless of whether Reading
-    /// is the active channel — it answers "what would this open", which is
-    /// what you want to know while picking. Whether Reading is the live
-    /// channel is already shown by the parent item's own checkmark.
+    /// The checkmark tracks the selected entry whether or not Reading is active: it
+    /// answers "what would this open". Whether Reading is live is already shown by
+    /// the parent item's checkmark.
     ///
     /// Static, and taking both the channel and the action target, so
     /// `MenuTests` can build one without constructing a `Menu` — that means

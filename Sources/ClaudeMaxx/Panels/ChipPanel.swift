@@ -138,10 +138,12 @@ final class ChipPanel: NSPanel, ChipPresenting {
     }
 
     private func reposition() {
-        let screens = NSScreen.screens.map { WindowGeometry.ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame) }
-        guard let mainScreen = NSScreen.main ?? NSScreen.screens.first else { return }   // no displays — nothing to show
-        let fallback = WindowGeometry.ScreenInfo(frame: mainScreen.frame, visibleFrame: mainScreen.visibleFrame)
-        let target = WindowGeometry.targetScreen(mouseLocation: NSEvent.mouseLocation, screens: screens, fallback: fallback)
+        guard let fallback = WindowGeometry.ScreenInfo.main else { return }   // no displays
+        let target = WindowGeometry.targetScreen(
+            mouseLocation: NSEvent.mouseLocation,
+            screens: WindowGeometry.ScreenInfo.all,
+            fallback: fallback
+        )
         let frame = WindowGeometry.freshFrame(desiredSize: Self.contentSize, aspectRatio: Self.contentSize, screen: target, corner: .topRight)
         setFrame(frame, display: true)
     }
