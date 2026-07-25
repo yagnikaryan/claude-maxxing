@@ -3,7 +3,7 @@ description: Control Claude Maxx (off | ask | auto | now | setup | hide | quit |
 allowed-tools: Bash(__CM_CMD_PATH__:*)
 ---
 
-!__CM_CMD_PATH__ $ARGUMENTS
+!`__CM_CMD_PATH__ $ARGUMENTS`
 
 Report the command output shown above, verbatim, and nothing else.
 
