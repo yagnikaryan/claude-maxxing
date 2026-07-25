@@ -124,7 +124,6 @@ final class FeedPanel: NSPanel, FeedPresenting {
         self.settings = settings
 
         let configuration = WKWebViewConfiguration()
-        // `.default()` (not `.nonPersistent()`) is what makes this a
         // These three lines are load-bearing for login and playback and none of
         // them look it — see CLAUDE.md before touching any of them.
         configuration.websiteDataStore = WKWebsiteDataStore.default()
@@ -277,15 +276,14 @@ final class FeedPanel: NSPanel, FeedPresenting {
         // picker mid-episode), re-resolving from the persisted frame would
         // discard a resize the user just made.
         if !isVisible {
-            guard let fallback = mainScreenInfo() else { return }   // no displays
-            let screens = NSScreen.screens.map { WindowGeometry.ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+            guard let fallback = WindowGeometry.ScreenInfo.main else { return }   // no displays
             let restored = settings.windowFrame.map { NSRectFromString($0) }
 
             let frame = WindowGeometry.resolvedFrame(
                 restored: restored,
                 desiredSize: Self.defaultDesiredSize,
                 aspectRatio: aspect,
-                screens: screens,
+                screens: WindowGeometry.ScreenInfo.all,
                 mouseLocation: NSEvent.mouseLocation,
                 fallbackScreen: fallback,
                 corner: .bottomRight
@@ -336,28 +334,18 @@ final class FeedPanel: NSPanel, FeedPresenting {
 
     @objc private func screenParametersChanged() {
         guard isVisible else { return }
-        guard let fallback = mainScreenInfo() else { return }
-        let screens = NSScreen.screens.map { WindowGeometry.ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+        guard let fallback = WindowGeometry.ScreenInfo.main else { return }
         let aspect = activeChannel?.preferredAspect ?? Self.defaultAspect
 
         let newFrame = WindowGeometry.reclamped(
             currentFrame: frame,
             aspectRatio: aspect,
-            screens: screens,
+            screens: WindowGeometry.ScreenInfo.all,
             mouseLocation: NSEvent.mouseLocation,
             fallbackScreen: fallback,
             corner: .bottomRight
         )
         setFrame(newFrame, display: true, animate: true)
-    }
-
-    // MARK: Helpers
-
-    /// `nil` means no displays at all; callers skip the frame steps rather than
-    /// crash.
-    private func mainScreenInfo() -> WindowGeometry.ScreenInfo? {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
-        return WindowGeometry.ScreenInfo(frame: screen.frame, visibleFrame: screen.visibleFrame)
     }
 }
 
