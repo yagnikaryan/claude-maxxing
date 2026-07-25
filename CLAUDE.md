@@ -6,16 +6,8 @@ loopback HTTP on port 8765.
 
 ## Setting it up in a fresh clone
 
-```bash
-./scripts/install.sh    # build, install /claude-maxx, merge hooks, start daemon
-./scripts/doctor.sh     # verify — exits 0 when healthy, 1 when something is broken
-```
-
-Then **restart Claude Code**. Hooks are read once at session start, so the session that ran
-the install cannot see them — this is the most common "I installed it and nothing happens".
-
-Signing into the content platforms is manual and cannot be automated: `/claude-maxx setup`
-opens a pinned window, the human logs in there once, cookies persist.
+Use the `setup-claude-maxx` skill — it carries the install, verify, and restart-Claude-Code
+steps, including the three that cannot be done for the user.
 
 ## After changing any Swift source
 
@@ -39,28 +31,24 @@ curl -s -X POST http://127.0.0.1:8765/show     # show the window
 curl -s http://127.0.0.1:8765/stats.json       # today's derived metrics
 ```
 
-Endpoints: `/start` `/stop` `/attention` `/cmd` `/show` `/status` `/stats.json` `/dashboard`.
+The endpoint list is `Router.route`'s switch.
 
 Logs: `~/Library/Logs/ClaudeMaxx.log` — the daemon is headless, so this is the only place
 window and navigation behavior can be reconstructed. `cmLog` writes there.
 
 ## Tests
 
-`swift test` — 72 tests, all headless-safe. Note two AppKit limits found the hard way:
+`swift test` — all headless-safe. Note two AppKit limits found the hard way:
 `NSPanel` and `WKWebView` work fine in the test process, but constructing an `NSStatusItem`
 (i.e. a `Menu`) **aborts** it with no window-server connection. That is why
 `Menu.readingSubmenu` is static and takes its target.
 
 ## Layout
 
-| Path | What |
-|---|---|
-| `Sources/ClaudeMaxx/Orchestrator.swift` | state machine (IDLE/PENDING/OFFERING/SHOWING/ALERTING), session tracking |
-| `Sources/ClaudeMaxx/HookServer.swift` | HTTP parsing + `Router` (pure, socket-free — test here) |
-| `Sources/ClaudeMaxx/Channels/` | per-site adapters behind `ContentChannel` |
-| `Sources/ClaudeMaxx/Panels/` | `FeedPanel` (content window), `ChipPanel`, `StatsPanel` |
-| `Sources/ClaudeMaxx/StatsStore.swift` | append-only JSONL event log; metrics derived at read time |
-| `SPEC.md` | the design doc; section numbers (§8.3 etc.) are cited throughout the code |
+`ls Sources/ClaudeMaxx/` covers the shape. Two things it won't tell you: `Router` in
+`HookServer.swift` is pure and socket-free, so routing tests belong there rather than behind a
+socket; and `SPEC.md` is the design doc whose section numbers (§8.3 etc.) are cited throughout
+the code.
 
 ## Things that will bite you
 
