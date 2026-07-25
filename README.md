@@ -138,8 +138,8 @@ not running until something starts it. Three ways, in the order you'll actually 
 | `./scripts/restart.sh` | restarts it onto a newly built binary (what you want after changing code). |
 
 To stop it: `/claude-maxx quit`, **Quit Claude Maxx** in the menu bar, or
-[`./scripts/stop.sh`](./scripts/stop.sh). Both leave your hooks, logins, and stats alone — it starts again by any
-of the routes above.
+[`./scripts/stop.sh`](./scripts/stop.sh). All three leave your hooks, logins, and stats alone — it starts
+again by any of the routes above.
 
 **"Fully off" means one of three different things**, so pick the one you want:
 

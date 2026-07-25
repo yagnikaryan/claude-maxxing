@@ -122,6 +122,15 @@ Done. Next:
   /claude-maxx auto      window opens by itself while prompts run
   /claude-maxx off       stop it opening at all
 
+This installed "Start with Claude Code" — a SessionStart hook that starts the
+daemon with every session, so you never think about it. To run it only when you
+ask instead, uncheck that in the menu bar or run:
+
+  ./scripts/claude-maxx-hook.sh disable
+
+Nothing then runs in the background; any /claude-maxx command still starts it on
+demand, and /claude-maxx quit puts it away.
+
 Restart Claude Code (or run /hooks) so it picks up the hook changes.
 Logs: ~/Library/Logs/ClaudeMaxx.log
 EOF
