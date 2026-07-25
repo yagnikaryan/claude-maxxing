@@ -141,11 +141,19 @@ fi
 # ---- Claude Code wiring ----------------------------------------------------
 
 if [ -f "$cmd_file" ]; then
-  if grep -q "$repo" "$cmd_file" 2>/dev/null; then
-    pass "/claude-maxx command" "$cmd_file"
-  else
+  if ! grep -q "$repo" "$cmd_file" 2>/dev/null; then
     fail "/claude-maxx command" "installed, but points at a different clone"
     fix "./scripts/install.sh   (rewrites it to point here)"
+  # The wrapper only runs if the line is the backticked placeholder form,
+  # !`cmd`. Without the backticks it is ordinary markdown: Claude Code passes it
+  # through as text, nothing executes, and the daemon is never contacted — while
+  # the command still *looks* like it worked, because the file also asks for the
+  # output to be reported. That shipped broken and went unnoticed for months.
+  elif ! grep -q '^!`.*`$' "$cmd_file" 2>/dev/null; then
+    fail "/claude-maxx command" "present but inert — the ! line is missing its backticks"
+    fix "./scripts/install.sh   (reinstalls the corrected command file)"
+  else
+    pass "/claude-maxx command" "$cmd_file"
   fi
 else
   fail "/claude-maxx command" "not installed"
