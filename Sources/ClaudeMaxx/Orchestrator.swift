@@ -409,11 +409,15 @@ final class Orchestrator {
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: .cmd, at: now())
+            if settings.snapBack, let app = capturedFrontmostApp {
+                app.activate(options: [])
+            }
             enterIdle()
         case .idle:
             break
         }
         isManuallyPinned = false
+        capturedFrontmostApp = nil
         showingStartedAt = nil
         showOpenedBy = nil
     }
