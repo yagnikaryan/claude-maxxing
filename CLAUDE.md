@@ -97,8 +97,13 @@ the code.
   force-pauses (`hide()` plus the channels' `__cmHidden` poll), so audio does not leak.
 - **`FeedPanel` must override `canBecomeKey`** — a borderless panel defaults to false, which
   leaves WebKit treating every page as blurred: login forms never take a cursor ("I can't type into
-  the Instagram login"). This does not violate SPEC decision #7, because the panel still never
-  *takes* key on show — `performShow` uses `orderFrontRegardless`, never `makeKeyAndOrderFront`.
+  the Instagram login"). SPEC decision #7 is intentionally reversed for a **fresh show only**:
+  `performShow` now calls `NSApp.activate` + `makeKeyAndOrderFront` there — arrow-key scrolling
+  needs focus without a prior click — but a refresh of an already-open window (`scroll on|off`,
+  channel switch) never repeats that call, so it doesn't re-steal focus from the terminal. The same
+  manual-open path captures `NSWorkspace.shared.frontmostApplication` into `capturedFrontmostApp`
+  (mirroring `enterPending`'s capture), so `settings.snapBack` also hands focus back on a manual
+  `hide`/`off`, not just an automatic close.
 - **`SIG_IGN` before `DispatchSourceSignal`** — the default action for SIGTERM/INT/HUP kills the
   process before the source ever fires, so `applicationWillTerminate` never runs and the daemon
   vanishes with no record. `installSignalHandlers` suppresses the default first, on purpose.

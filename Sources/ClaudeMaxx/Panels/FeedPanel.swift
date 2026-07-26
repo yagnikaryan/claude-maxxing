@@ -288,10 +288,12 @@ final class FeedPanel: NSPanel, FeedPresenting {
                 corner: .bottomRight
             )
             setFrame(frame, display: true)
+            // Reverses decision #7 on purpose: arrow keys should work with no click.
+            // Scoped to a fresh show — a refresh of an already-open window (scroll
+            // on|off, channel picker) must not steal focus back from the terminal.
+            NSApp.activate(ignoringOtherApps: true)
+            makeKeyAndOrderFront(nil)
         }
-        // Reverses decision #7 on purpose: arrow keys should work with no click.
-        NSApp.activate(ignoringOtherApps: true)
-        makeKeyAndOrderFront(nil)
 
         // Lifts hide()'s force-pause flag.
         webView.evaluateJavaScript("window.__cmHidden = false;")
