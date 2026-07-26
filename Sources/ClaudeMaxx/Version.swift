@@ -9,5 +9,5 @@
 /// runs in the clone and pairs this with `git describe`, so the two together
 /// say both what is running and what the source is at.
 enum Version {
-    static let current = "0.2.0"
+    static let current = "0.2.1"
 }
