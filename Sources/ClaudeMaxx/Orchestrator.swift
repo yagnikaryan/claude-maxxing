@@ -409,11 +409,15 @@ final class Orchestrator {
             pauseContent()
             hideWindowAction()
             logContentEnd(closedBy: .cmd, at: now())
+            if settings.snapBack, let app = capturedFrontmostApp {
+                app.activate(options: [])
+            }
             enterIdle()
         case .idle:
             break
         }
         isManuallyPinned = false
+        capturedFrontmostApp = nil
         showingStartedAt = nil
         showOpenedBy = nil
     }
@@ -431,6 +435,13 @@ final class Orchestrator {
             dismissChip()
             beginShowing(openedBy: openedBy, at: now())
         case .idle, .pending:
+            // Only from .idle: .pending already captured this at enterPending, and
+            // overwriting it here would lose the app that was frontmost when the
+            // wait started. Without this, snap-back on a manual hide/off (snapBack
+            // defaults true) silently never fires — see CLAUDE.md.
+            if state == .idle {
+                capturedFrontmostApp = NSWorkspace.shared.frontmostApplication
+            }
             showTimer?.cancel()
             showTimer = nil
             beginShowing(openedBy: openedBy, at: now())

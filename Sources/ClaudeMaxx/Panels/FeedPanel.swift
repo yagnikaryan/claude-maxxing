@@ -153,8 +153,7 @@ final class FeedPanel: NSPanel, FeedPresenting {
         )
     }
 
-    /// Required for login forms to take a cursor at all; does not violate SPEC
-    /// decision #7. See CLAUDE.md.
+    /// Required for login forms to take a cursor at all. See CLAUDE.md.
     override var canBecomeKey: Bool { true }
 
     /// Mouse-*up*, after WebKit has moved focus — at mouse-down
@@ -289,8 +288,12 @@ final class FeedPanel: NSPanel, FeedPresenting {
                 corner: .bottomRight
             )
             setFrame(frame, display: true)
+            // Reverses decision #7 on purpose: arrow keys should work with no click.
+            // Scoped to a fresh show — a refresh of an already-open window (scroll
+            // on|off, channel picker) must not steal focus back from the terminal.
+            NSApp.activate(ignoringOtherApps: true)
+            makeKeyAndOrderFront(nil)
         }
-        orderFrontRegardless()   // no makeKeyAndOrderFront: never takes key/activates app
 
         // Lifts hide()'s force-pause flag.
         webView.evaluateJavaScript("window.__cmHidden = false;")

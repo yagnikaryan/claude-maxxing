@@ -9,18 +9,36 @@ final class FeedPanelTests: XCTestCase {
 
     /// Regression: a borderless panel defaults to `canBecomeKey == false`,
     /// which left the webview permanently blurred — no caret in any login
-    /// form, typing impossible. The fix is the pair asserted here: the
-    /// panel may hold key (`canBecomeKey`), but only takes it when a click
-    /// lands on a view that requests it (`becomesKeyOnlyIfNeeded`), never
-    /// merely by being shown.
-    func testPanelCanBecomeKeyOnClickButNeverGrabsIt() {
+    /// form, typing impossible. The fix is the pair asserted here: the panel
+    /// may hold key (`canBecomeKey`), and `becomesKeyOnlyIfNeeded` is what
+    /// lets a click on a view that requests it (e.g. a text field) hand it
+    /// key status without the app itself activating. This only covers the
+    /// click-time guard (`cmActivateIfEditingText`) — it says nothing about
+    /// `performShow`, which now activates and takes key on its own; see
+    /// `testShowGivesThePanelKeyStatusWithoutAClick` for that path.
+    func testClickingThePanelCanGiveItKeyStatusWithoutAppActivation() {
         let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         let panel = FeedPanel(settings: settings)
 
         XCTAssertTrue(panel.canBecomeKey, "webview focus (login typing) requires key eligibility")
-        XCTAssertTrue(panel.becomesKeyOnlyIfNeeded, "key must arrive via user click, not via show")
-        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel), "the app itself must never activate")
+        XCTAssertTrue(panel.becomesKeyOnlyIfNeeded, "click-time key handoff goes through becomesKeyOnlyIfNeeded")
+        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel), "a click on the panel must not itself activate the app")
         XCTAssertFalse(panel.styleMask.contains(.closable), "no close button by design (SPEC §7)")
+    }
+
+    /// This PR's entire stated purpose: `performShow` now calls
+    /// `NSApp.activate(ignoringOtherApps:)` + `makeKeyAndOrderFront(nil)` instead of
+    /// `orderFrontRegardless()`, so arrow keys must work the instant the panel is
+    /// shown, with no prior click. Reverses decision #7 on purpose (see
+    /// `performShow`'s comment) for the show path only.
+    func testShowGivesThePanelKeyStatusWithoutAClick() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let panel = FeedPanel(settings: settings)
+
+        panel.show(channel: nil)
+
+        let becameKey = expectation(for: NSPredicate { _, _ in panel.isKeyWindow }, evaluatedWith: panel)
+        wait(for: [becameKey], timeout: 10)
     }
 
     /// Regression: without the "Version/x Safari/x" UA suffix, Instagram

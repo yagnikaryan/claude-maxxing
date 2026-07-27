@@ -405,7 +405,7 @@ Loopback bind only; no auth on the API is acceptable *only* because of that bind
 | 4 | Chip over UNUserNotification (v0.2) | Notifications require signed bundle + permission; chip needs neither |
 | 5 | `ended`-event advance over fixed timer | Real watch-complete semantics; universal detection, per-site action only |
 | 6 | Counter+sid dictionary+watchdog | Self-heals crashes/sleep; duplicate-start idempotent |
-| 7 | Non-activating panels throughout | Never steal keyboard focus from the terminal |
+| 7 | Non-activating panels throughout | Never steal keyboard focus from the terminal (reversed for fresh shows only — see the login-typing bugfix section) |
 | 8 | Menu bar daemon over Chrome extension | Extensions can't float over a terminal or own window lifecycle |
 | 9 | Pause-and-hide over kill-webview | Preserves login + feed position across waits |
 | 10 | Shorts first, X feed second | Highest DOM stability; easiest ambient channel |
@@ -447,9 +447,9 @@ Claude Code prompt each time:
   windowFrame` and silently discard a resize/reposition made earlier in the
   same still-open episode.
 - The window has no close button by design (`styleMask` is
-  `[.nonactivatingPanel, .resizable]`, never `.closable`, and it's shown via
-  `orderFrontRegardless()` so it never becomes key *on show*; it can become
-  key when clicked — see the login-typing bugfix section below) —
+  `[.nonactivatingPanel, .resizable]`, never `.closable`; it takes key focus
+  on a fresh show and on a deliberate click into the page — see the
+  login-typing bugfix section below, updated by `focus-window-on-show`) —
   `/claude-maxx off`/`hide` (or quitting the app) is the only way to end a
   setup session opened this way.
 - **Drag handle.** `FeedPanel` had no way to be moved: no `.titled` style
@@ -657,16 +657,23 @@ Fix, two lines in `FeedPanel`:
   on a view that requests it (`needsPanelToBecomeKey`; WebKit's content
   view requests it for page clicks, the drag strip does not).
 
-Decision #7 ("never steal keyboard focus from the terminal") is preserved,
-and the distinction is worth stating precisely: the panel never takes key
-when it **appears** (`performShow` uses `orderFrontRegardless()`, never
+Decision #7 ("never steal keyboard focus from the terminal") held as
+described at the time of this fix: the panel never took key when it
+**appeared** (`performShow` used `orderFrontRegardless()`, never
 `makeKeyAndOrderFront`, and `.nonactivatingPanel` keeps the app itself from
 activating — the terminal's app stays active and its menu bar stays up).
-It accepts key only on a deliberate user click into the page — the
-Spotlight model: keystrokes route to the panel while it's key, and click
-back into the terminal returns them. Auto-opened episodes during a prompt
-remain exactly as unobtrusive as before unless the user chooses to
-interact.
+It took key only on a deliberate user click into the page — the Spotlight
+model: keystrokes route to the panel while it's key, and click back into
+the terminal returns them. Auto-opened episodes during a prompt remained
+exactly as unobtrusive as before unless the user chose to interact.
+
+**Superseded by `focus-window-on-show`:** decision #7 is now intentionally
+reversed a second time, scoped to a fresh show — `performShow` calls
+`NSApp.activate` + `makeKeyAndOrderFront` there so arrow-key scrolling works
+without the click described above. A refresh of an already-open window
+(`scroll on|off`, channel switch) never repeats that call, so it still
+follows the click-to-focus model above for everything after the initial
+open.
 
 ## Post-integration bugfix: Instagram login never persisted (UA fingerprinting)
 
